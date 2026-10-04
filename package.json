@@ -1,0 +1,21 @@
+{
+  "name": "tianjin-renai-reimbursement",
+  "version": "0.1.0",
+  "private": true,
+  "description": "天津仁爱学院报销管理系统 - 零依赖 Demo（Node 内置 node:sqlite + 原生前端）",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node --experimental-sqlite server/index.js",
+    "restart": "node server/restart.js restart",
+    "stop": "node server/restart.js stop",
+    "test": "node server/smoke.js",
+    "test:ui": "node server/ui_smoke.js",
+    "verify:export": "python server/verify_exports.py"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "_comment": "本项目刻意不依赖任何 npm 包：数据库用 node:sqlite，ZIP/docx/xlsx 生成全部手写实现。"
+}

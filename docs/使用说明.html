@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>天津仁爱学院报销系统 · 使用说明</title>
+<style>
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --line:#e3e6ea; --line-soft:#eef0f3;
+  --text:#1f2937; --muted:#6b7280; --brand:#7a1f2b; --brand-soft:#f7eef0;
+  --accent:#0f766e; --accent-soft:#eaf5f3; --warn:#b45309; --warn-soft:#fdf5e7;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family:"Microsoft YaHei","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px 72px;display:grid;grid-template-columns:216px 1fr;gap:32px}
+header.top{background:linear-gradient(135deg,#7a1f2b,#9c3140);color:#fff;padding:38px 0 30px;margin-bottom:28px}
+header.top .inner{max-width:1180px;margin:0 auto;padding:0 24px}
+header.top h1{margin:0 0 6px;font-size:26px;letter-spacing:.5px}
+header.top p{margin:0;opacity:.85;font-size:14px}
+header.top .meta{margin-top:14px;font-size:13px;opacity:.8}
+.btn-print{display:inline-block;margin-top:14px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);
+  color:#fff;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:13px}
+.btn-print:hover{background:rgba(255,255,255,.28)}
+nav.toc{position:sticky;top:24px;align-self:start;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px;padding:16px 14px;font-size:13.5px}
+nav.toc b{display:block;margin-bottom:10px;font-size:13px;color:var(--muted);letter-spacing:1px}
+nav.toc a{display:block;padding:5px 8px;border-radius:6px;color:var(--text);text-decoration:none}
+nav.toc a:hover{background:var(--brand-soft);color:var(--brand)}
+main{min-width:0}
+section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px 26px;margin-bottom:20px}
+h2{font-size:19px;margin:0 0 14px;padding-bottom:10px;border-bottom:2px solid var(--brand-soft);color:var(--brand)}
+h3{font-size:15.5px;margin:20px 0 8px}
+h3:first-of-type{margin-top:4px}
+p{margin:8px 0}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:#fafbfc;font-weight:600;color:#374151}
+tbody tr:nth-child(even) td{background:#fcfcfd}
+code{background:#f1f3f5;border-radius:4px;padding:1px 6px;font-family:Consolas,Monaco,monospace;font-size:13px;color:#7a1f2b}
+pre{background:#f8f9fa;border:1px solid var(--line);border-left:3px solid var(--brand);border-radius:6px;
+  padding:12px 14px;overflow:auto;font-size:12.5px;line-height:1.7}
+pre code{background:none;padding:0;color:#374151}
+ul,ol{padding-left:22px;margin:8px 0}
+li{margin:4px 0}
+.note{background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin:12px 0;font-size:14px}
+.warn{background:var(--warn-soft);border-left:3px solid var(--warn);border-radius:6px;padding:10px 14px;margin:12px 0;font-size:14px}
+.steps{background:var(--brand-soft);border-radius:8px;padding:6px 14px;margin:12px 0}
+figure{margin:14px 0 6px}
+figure img{width:100%;border:1px solid var(--line);border-radius:8px;display:block}
+figcaption{font-size:12.5px;color:var(--muted);margin-top:6px;text-align:center}
+.footer{grid-column:1/-1;text-align:center;color:var(--muted);font-size:13px;padding-top:12px}
+@media (max-width:860px){.wrap{grid-template-columns:1fr}nav.toc{position:static;margin-bottom:20px}}
+@media print{
+  body{background:#fff;font-size:12px}
+  header.top{background:#7a1f2b !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  nav.toc,.btn-print{display:none}
+  .wrap{display:block;max-width:none;padding:0}
+  section{border:none;padding:0 0 14px;page-break-inside:avoid}
+  figure img{max-height:320px;object-fit:contain}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="inner">
+    <h1>天津仁爱学院报销系统 · 使用说明</h1>
+    <p>面向报销经办人、项目负责人与财务审核人的操作手册</p>
+    <div class="meta">技术向内容（部署 / 目录结构 / API）见项目根目录 README.md 与 deploy/DEPLOY.md</div>
+    <button class="btn-print" onclick="window.print()">🖨 打印 / 另存为 PDF</button>
+  </div>
+</header>
+
+<div class="wrap">
+<nav class="toc">
+  <b>目录</b>
+  <a href="#s1">1. 启动与访问</a>
+  <a href="#s2">2. 界面总览</a>
+  <a href="#s3">3. 首次使用 6 步</a>
+  <a href="#s4">4. 基础设置</a>
+  <a href="#s5">5. 字典维护</a>
+  <a href="#s6">6. 报销项目</a>
+  <a href="#s7">7. 项目四步向导</a>
+  <a href="#s8">8. 金额计算规则</a>
+  <a href="#s9">9. 导出的两份表</a>
+  <a href="#s10">10. 票据中心</a>
+  <a href="#s11">11. 常见问题</a>
+  <a href="#s12">12. 运维速查</a>
+</nav>
+
+<main>
+
+<section id="s1">
+  <h2>1. 启动与访问</h2>
+  <table>
+    <thead><tr><th style="width:22%">方式</th><th style="width:38%">操作</th><th>适用</th></tr></thead>
+    <tbody>
+      <tr><td>双击启动（推荐）</td><td><code>启动报销系统.bat</code></td><td>非技术同事；脚本检查 Node ≥ 22 后自动开浏览器</td></tr>
+      <tr><td>命令行</td><td><code>npm start</code></td><td>需要看日志</td></tr>
+      <tr><td>重启</td><td><code>npm restart</code></td><td>端口被占 / 数据库锁（先杀掉占用 5180 的旧进程再拉起）</td></tr>
+      <tr><td>停止</td><td><code>npm stop</code></td><td>下班关机前</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>访问地址：<b>http://127.0.0.1:5180</b></li>
+    <li>必须使用 <b>Node.js ≥ 22</b>（数据库用的是 Node 22 内置的 <code>node:sqlite</code>）。</li>
+  </ul>
+  <div class="warn">⚠️ 不要直接双击 <code>server/public/index.html</code>：<code>file://</code> 协议连不上后台数据库，页面会是空白（系统会弹窗提示正确入口）。</div>
+</section>
+
+<section id="s2">
+  <h2>2. 界面总览</h2>
+  <table>
+    <thead><tr><th style="width:26%">模块</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td>◈ 工作台</td><td>汇总卡片：项目数、待审票据、报销总额等</td></tr>
+      <tr><td>▤ 报销项目</td><td>项目列表 / 新建；点「进入项目」走四步向导</td></tr>
+      <tr><td>▧ 票据中心</td><td>全局待审队列，可快速「通过」或「处理」</td></tr>
+      <tr><td>⚙ 基础设置</td><td>补助标准、单位名称、默认收款信息</td></tr>
+      <tr><td>☰ 字典维护</td><td>期间（学期 / 自然年）、学院、专业</td></tr>
+    </tbody>
+  </table>
+  <p>右上角 <code>↻ 刷新</code> 可刷新当前页。</p>
+  <figure><img src="ui-dashboard.png" alt="工作台"><figcaption>图 1　工作台</figcaption></figure>
+</section>
+
+<section id="s3">
+  <h2>3. 首次使用：按顺序做这 6 步</h2>
+  <table>
+    <thead><tr><th style="width:8%">步骤</th><th style="width:22%">在哪做</th><th>做什么</th></tr></thead>
+    <tbody>
+      <tr><td>①</td><td>基础设置</td><td>确认伙食 / 市内交通补助标准、单位名称、默认收款账户</td></tr>
+      <tr><td>②</td><td>字典维护</td><td>确认学院、专业、期间齐全（已内置官网 12 学院 / 39 专业）</td></tr>
+      <tr><td>③</td><td>报销项目</td><td>新建项目（选类别、学院、是否有差旅）</td></tr>
+      <tr><td>④</td><td>项目 · 步骤 1 / 2</td><td>添加教师与学生 + 录差旅行程（行程可按人绑定）</td></tr>
+      <tr><td>⑤</td><td>项目 · 步骤 3</td><td>上传票据（OCR）→ <b>逐张审核通过</b></td></tr>
+      <tr><td>⑥</td><td>项目 · 步骤 4</td><td>预览报表 → 导出 docx / xlsx</td></tr>
+    </tbody>
+  </table>
+  <div class="note">顺序不能乱：票据必须「审核通过」才会计入金额；没有成员和天数，补助算不出来。</div>
+</section>
+
+<section id="s4">
+  <h2>4. 基础设置</h2>
+  <figure><img src="ui-settings.png" alt="基础设置"><figcaption>图 2　基础设置</figcaption></figure>
+  <table>
+    <thead><tr><th style="width:30%">字段</th><th style="width:18%">默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>教师日餐费</td><td>100 元/天</td><td>伙食补助费日标准</td></tr>
+      <tr><td>教师日市内交通</td><td>80 元/天</td><td>市内交通补助日标准</td></tr>
+      <tr><td>学生系数</td><td>0.5</td><td>学生按教师标准 × 系数（即餐 50、市交 40）</td></tr>
+      <tr><td>单位名称</td><td>天津仁爱学院</td><td>写入资金申请单抬头</td></tr>
+      <tr><td>币种前缀</td><td>人民币</td><td>合计行大写前缀</td></tr>
+      <tr><td>收款单位名称 / 开户银行 / 银行账号</td><td>空</td><td>导出资金申请单时的默认值，可在导出时临时改</td></tr>
+    </tbody>
+  </table>
+  <p>保存后<b>立即对所有项目生效</b>，页面下方有「按出差 4 天」的试算预览可核对。</p>
+</section>
+
+<section id="s5">
+  <h2>5. 字典维护</h2>
+  <figure><img src="ui-dictionary.png" alt="字典维护"><figcaption>图 3　字典维护</figcaption></figure>
+  <ul>
+    <li><b>期间</b>：支持「学期」「自然年」两种口径，新建项目时选归属期间。</li>
+    <li><b>学院 / 专业</b>：已按学校官网（<code>tjrac.edu.cn/jgsz/ejxy.htm</code>）内置 <b>12 个二级学院 + 39 个本科专业</b>；专业下拉会按所选学院自动过滤。</li>
+    <li>同步官网最新数据：<code>node --experimental-sqlite server/sync_org.js --dry-run</code> 先看差异，确认后去掉 <code>--dry-run</code> 执行。</li>
+  </ul>
+</section>
+
+<section id="s6">
+  <h2>6. 报销项目</h2>
+  <figure><img src="ui-projects.png" alt="项目列表"><figcaption>图 4　报销项目列表</figcaption></figure>
+  <table>
+    <thead><tr><th style="width:22%">字段</th><th style="width:10%">必填</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>项目名称</td><td>✅</td><td>如「2026年暑期师资培训（合肥）」</td></tr>
+      <tr><td>项目编号</td><td>—</td><td>留空自动生成（前缀 + 序号，自动避让已有编号）</td></tr>
+      <tr><td>项目分类</td><td>✅</td><td>科研 <code>SP</code> / 教改 <code>JG</code> / 师资培训 <code>PX</code> / 竞赛 <code>JS</code> / 其他 <code>QT</code></td></tr>
+      <tr><td>所属期间</td><td>—</td><td>学期或自然年</td></tr>
+      <tr><td>学院 / 专业</td><td>—</td><td>专业列表随学院联动</td></tr>
+      <tr><td>项目负责人</td><td>—</td><td></td></tr>
+      <tr><td>预算金额</td><td>—</td><td>仅作参考，不参与报销计算</td></tr>
+      <tr><td>支付事由</td><td>—</td><td>会写入资金申请单的「支付事由」</td></tr>
+      <tr><td>是否含差旅</td><td>—</td><td>决定导出物：有差旅多一份《差旅费报销明细表》</td></tr>
+    </tbody>
+  </table>
+  <p>列表支持<b>按名称搜索 + 按分类筛选</b>；删除项目会级联删除其行程、成员、票据。</p>
+</section>
+
+<section id="s7">
+  <h2>7. 项目四步向导</h2>
+  <figure><img src="ui-detail.png" alt="项目详情"><figcaption>图 5　项目详情（四步向导）</figcaption></figure>
+
+  <h3>步骤 1 · 教师与学生</h3>
+  <table>
+    <thead><tr><th style="width:26%">字段</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>身份</td><td>教师 / 学生（学生补助按系数减半）</td></tr>
+      <tr><td>姓名、工号 / 学号、专业、电话</td><td>专业可从下拉选（按项目学院过滤）</td></tr>
+      <tr><td>职级</td><td>如「二类」，学生可留空</td></tr>
+      <tr><td>出差天数</td><td>默认继承所绑定行程的天数，可单独改</td></tr>
+      <tr><td>日餐费 / 日市内交通</td><td><b>留空用全局标准</b>；填了则按个人标准算</td></tr>
+    </tbody>
+  </table>
+  <div class="note">💡 先加人再录行程：行程要按人绑定，成员先录好，第 2 步才勾得到人。</div>
+
+  <h3>步骤 2 · 差旅行程</h3>
+  <p>支持<b>多段行程</b>：点「+ 增加一行行程」可添加多行，每行一段行程。</p>
+  <table>
+    <thead><tr><th style="width:24%">字段</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>出差事由</td><td>写入《差旅费报销明细表》表头</td></tr>
+      <tr><td>出发 / 返回日期</td><td>天数 = <b>含首尾</b>的天数</td></tr>
+      <tr><td>出发地 / 目的地</td><td>生成明细表时，每人按<b>自己绑定的行程</b>显示起讫地点</td></tr>
+      <tr><td>绑定人员</td><td>勾选只走这段行程的人；<b>不勾选 = 全部人员默认</b>套用此段行程</td></tr>
+    </tbody>
+  </table>
+  <div class="note">💡 <b>自动填充</b>：如果该项目的票据已经 OCR 出日期和行程，点「+ 增加一行行程」时会自动预填出发 / 返回日期与往返城市；编辑行程时可用「从票据填充空项」（只填空值，不覆盖已填）。</div>
+
+  <h3>步骤 3 · 票据与审核</h3>
+  <figure><img src="ui-receiptsStep.png" alt="票据步骤"><figcaption>图 6　票据与审核</figcaption></figure>
+  <ol>
+    <li><b>上传票据</b>：支持 <code>jpg / jpeg / png / gif / bmp / webp / tif / tiff / pdf</code>，可一次选多张；PDF（含铁路电子客票）走内置文本解析。可填「补充提示」提高归类准确度，如 <code>住宿费 / 合肥</code>。</li>
+    <li><b>人工审核</b>：识别结果一律是<b>待审核</b>，必须逐张核对字段（费用科目、金额、归属成员、发票号、日期、销方、行程），点 <b>✓ 审核通过</b> 才计入报销。错票可<b>驳回</b>（不计入）或<b>删除</b>；误通过可「撤销通过」。</li>
+    <li><b>批量导入</b>：点「批量导入」→ 下载 CSV 模板 → 粘数据，支持 CSV / JSON 两种格式。</li>
+  </ol>
+  <p>CSV 模板表头：</p>
+  <pre><code>票据类型,姓名,工号/学号,发票号,日期,金额,销方名称,纳税人识别号,行程,费用,备注
+住宿费,刘海斌,093024,12345678,2026-03-02,1743,北京如家酒店,91110000123456789A,,住宿3晚,
+城市间交通费,刘海斌,093024,22345678,2026-03-02,109,中国铁路,91110000123456789A,天津-北京,往返高铁票,</code></pre>
+
+  <h3>步骤 4 · 报表生成</h3>
+  <figure><img src="ui-report.png" alt="报表"><figcaption>图 7　报表生成与导出</figcaption></figure>
+  <ul>
+    <li>上半部分是<b>与导出文件同版式的预览</b>，可点 🖨 <b>打印</b>（或直接浏览器打印为 PDF 留存）。</li>
+  </ul>
+  <table>
+    <thead><tr><th style="width:34%">按钮</th><th style="width:34%">产物</th><th>条件</th></tr></thead>
+    <tbody>
+      <tr><td>⬇ 导出差旅费报销明细表</td><td><code>项目编号_差旅费报销明细表.docx</code></td><td>项目含差旅且有行程</td></tr>
+      <tr><td>⬇ 导出资金申请单</td><td><code>项目编号_资金申请单.xlsx</code></td><td>任何项目</td></tr>
+    </tbody>
+  </table>
+  <p>导出资金申请单时会先弹窗填「报销金额 / 收款单位名称 / 开户银行 / 银行账号 / 支付方式」，可临时覆盖默认值。导出文件同时落在服务器的 <code>exports/</code> 目录，历史记录可在报表步骤追溯。</p>
+</section>
+
+<section id="s8">
+  <h2>8. 金额是怎么算出来的</h2>
+  <table>
+    <thead><tr><th style="width:22%">费用项</th><th>计算规则</th></tr></thead>
+    <tbody>
+      <tr><td>城市间交通费</td><td>该类票据金额之和；明细表显示表达式，如 <code>54.5*2</code>（单程票价 × 张数），多种票价用 <code>+</code> 连接</td></tr>
+      <tr><td>住宿费</td><td>住宿票据金额之和</td></tr>
+      <tr><td>伙食补助费</td><td>日标准 × 出差天数（学生 × 系数）；显示 <code>100*4</code></td></tr>
+      <tr><td>市内交通费</td><td><b>有市内交通票据就按票据实报</b>，否则按 日标准 × 天数</td></tr>
+      <tr><td>其他费用</td><td>其他类票据逐条列出（超 3 条合并为「其他 N 项」）</td></tr>
+      <tr><td>小计</td><td>每人五项相加</td></tr>
+      <tr><td>合计</td><td>全员小计之和；明细表末行给出<b>人民币大写 + ¥ 小写</b></td></tr>
+    </tbody>
+  </table>
+  <div class="note">只有 <b>审核通过（approved）</b> 的票据参与计算；待审核、驳回的都不计入。</div>
+</section>
+
+<section id="s9">
+  <h2>9. 导出的两份表</h2>
+  <table>
+    <thead><tr><th style="width:26%">文件</th><th>版式</th></tr></thead>
+    <tbody>
+      <tr><td>差旅费报销明细表 .docx</td><td>横向 A4，11 列（部门 / 姓名 / 工号 / 职级 / 起讫地点 / 城市间交通费 / 住宿费 / 伙食补助费 / 市内交通费 / 其他费用·项目·金额），列头纵向合并，含小计行与整行合并的<b>合计行</b>，底部签字区</td></tr>
+      <tr><td>资金申请单 .xlsx</td><td>复刻学校官方模板：标题行、日期行（留空手写）、合同编号 + 收款单位、开户行 + 账号、金额数字网格（前导零 ⊗ 注销）+ ¥ 小写、两行 6 格签字栏。<b>「合同(项目)编号及名称」仅科研类项目填写</b>，教学 / 教改 / 师资培训 / 竞赛一律留空</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="s10">
+  <h2>10. 票据中心（全局）</h2>
+  <p>左侧「票据中心」汇总<b>所有项目</b>的待审票据，徽标数字 = 待审数量。列表里可直接点<b>通过</b>快速放行，或点<b>处理</b>跳到对应项目的票据步骤逐张核对。</p>
+  <h3>按项目合并打印票据</h3>
+  <p>每个项目卡片（以及项目详情 · 票据步骤）右上角都有 <b>🖨 打印全部票据</b>：系统会把该项目<b>所有 PDF 票据按上传顺序合并成一个 PDF</b>（每张票据单独一页），弹窗内先预览，确认后点 <b>🖨 打印</b> 调起打印对话框；也可点<b>新窗口打开</b>用浏览器自带 PDF 打印。非 PDF 票据（图片等）自动跳过。</p>
+  <figure><img src="ui-receipts.png" alt="票据中心"><figcaption>图 8　票据中心</figcaption></figure>
+</section>
+
+<section id="s11">
+  <h2>11. 常见问题</h2>
+  <table>
+    <thead><tr><th style="width:34%">现象</th><th>原因 / 处理</th></tr></thead>
+    <tbody>
+      <tr><td>打开页面一片空白</td><td>用 <code>file://</code> 打开了 HTML → 必须访问 http://127.0.0.1:5180</td></tr>
+      <tr><td><code>npm start</code> 报端口占用 / 数据库锁</td><td>执行 <code>npm restart</code>（先杀旧进程）</td></tr>
+      <tr><td>提示需要 Node 版本</td><td>升级到 Node ≥ 22</td></tr>
+      <tr><td>票据识别字段为空或不准</td><td>识别结果本来就需<b>人工审核</b>：在票据卡片上直接改字段，改完点「审核通过」</td></tr>
+      <tr><td>补助金额算不出来</td><td>检查：成员是否添加、出差天数是否填、行程是否存在</td></tr>
+      <tr><td>想给同事访问</td><td>设置环境变量 <code>AUTH_USER</code> / <code>AUTH_PASS</code> 启用 Basic Auth，或按 <code>deploy/DEPLOY.md</code> 部署到服务器</td></tr>
+      <tr><td>想看演示效果</td><td><code>node --experimental-sqlite server/demo_data.js</code>（生成 5 个覆盖全分类的演示项目）</td></tr>
+      <tr><td>数据丢了怎么办</td><td>数据库在 <code>data/reimburse.db</code>，定期用 <code>deploy/backup.sh</code> 备份</td></tr>
+      <tr><td>导出报错</td><td>看 <code>data/server.log</code>；多数是服务未启动或项目缺行程 / 成员</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="s12">
+  <h2>12. 运维速查</h2>
+  <pre><code>npm start                 # 启动
+npm restart               # 强制重启（杀 5180 占用进程）
+npm stop                  # 停止
+node --experimental-sqlite server/smoke.js        # API 冒烟（56 项）
+node --experimental-sqlite server/ui_smoke.js     # 界面冒烟（无头浏览器）
+python server/verify_exports.py                   # 导出文件校验（40 项）
+node --experimental-sqlite server/demo_data.js    # 灌演示数据
+node --experimental-sqlite server/sync_org.js --dry-run   # 同步学院/专业（预演）</code></pre>
+  <p>日志文件：<code>data/server.log</code>　·　数据库：<code>data/reimburse.db</code>　·　票据原件：<code>data/uploads/</code>　·　导出件：<code>exports/</code></p>
+</section>
+
+<div class="footer">天津仁爱学院报销系统 · 使用说明</div>
+</main>
+</div>
+</body>
+</html>

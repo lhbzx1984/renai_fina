@@ -1,0 +1,15 @@
+# ---- 运行时数据（含票据原件/数据库，绝不上库）----
+data/
+exports/
+_trash_exports/
+*.log
+
+# ---- 本机环境 / 依赖 ----
+node_modules/
+.workbuddy/
+.DS_Store
+Thumbs.db
+
+# ---- 含真实人员出差信息的原始素材，默认不入库 ----
+合肥培训差旅费明细表.docx
+天津仁爱学院资金申请单-合肥培训.xlsx

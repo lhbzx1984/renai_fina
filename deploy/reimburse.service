@@ -1,0 +1,63 @@
+[Unit]
+Description=Tianjin Renai College Reimbursement System
+Documentation=file:/opt/reimburse/deploy/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reimburse
+Group=reimburse
+WorkingDirectory=/opt/reimburse
+
+# ---- 关键环境变量（deploy.sh 会自动改写本文件并生成 env 文件）----
+# 密码与密钥不要写在本 unit 里，统一放 /etc/reimburse/env（权限 600）
+EnvironmentFile=-/etc/reimburse/env
+
+# 只监听回环地址，公网流量必须经 Nginx，这样 5180 不会直接暴露
+Environment=HOST=127.0.0.1
+Environment=PORT=5180
+Environment=NODE_ENV=production
+
+# node:sqlite 在 Node 22 是实验特性，必须带此标志
+ExecStart=/usr/bin/node --experimental-sqlite server/index.js
+
+# ---- 安全加固 ----
+# 禁止提权后执行新程序
+NoNewPrivileges=true
+# 私有临时目录
+PrivateTmp=true
+# 禁止写入系统目录（数据目录 /var/lib/reimburse 已单独放开）
+ProtectSystem=strict
+ReadWritePaths=/var/lib/reimburse /var/lib/reimburse/exports /var/log/reimburse
+ProtectHome=true
+# 禁止访问内核模块 / 调整系统参数
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# 丢弃全部权限（除上面 ReadWritePaths）
+CapabilityBoundingSet=
+AmbientCapabilities=
+# 关闭可能被滥用的系统调用
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictNamespaces=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# ---- 重启策略 ----
+Restart=always
+RestartSec=3
+# 反复崩溃时不要无限重启，给运维留出介入时间
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# 日志：journald 会收集 stdout/stderr
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=reimburse
+
+[Install]
+WantedBy=multi-user.target

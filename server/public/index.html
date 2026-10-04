@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>天津仁爱学院 · 报销管理系统</title>
+<!-- 用相对路径而非 /css/app.css：双击 index.html（file:// 协议）时，
+     绝对路径会被解析成 file:///C:/css/app.css 而加载失败，页面退化成浏览器默认样式。 -->
+<link rel="stylesheet" href="css/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+</head>
+<body>
+<div class="app">
+  <!-- ============ 侧栏 ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <h1><span class="logo">仁</span>报销管理系统</h1>
+      <p>TIANJIN RENAI UNIVERSITY</p>
+    </div>
+    <nav class="nav" id="nav">
+      <div class="nav-item active" data-view="dashboard"><span class="ico">◈</span>工作台</div>
+      <div class="nav-title">业务</div>
+      <div class="nav-item" data-view="projects"><span class="ico">▤</span>报销项目<span class="badge" id="navPending" style="display:none">0</span></div>
+      <div class="nav-item" data-view="receipts"><span class="ico">▧</span>票据中心<span class="badge" id="navPending2" style="display:none">0</span></div>
+      <div class="nav-sep"></div>
+      <div class="nav-title">配置</div>
+      <div class="nav-item" data-view="settings"><span class="ico">⚙</span>基础设置</div>
+      <div class="nav-item" data-view="dictionary"><span class="ico">☰</span>字典维护</div>
+      <div class="nav-sep"></div>
+      <div class="nav-title">帮助</div>
+      <div class="nav-item" data-view="guide"><span class="ico">❔</span>使用引导</div>
+    </nav>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <main class="main">
+    <header class="topbar">
+      <h2 id="pageTitle">工作台</h2>
+      <span class="sub" id="pageSub"></span>
+      <span class="spacer"></span>
+      <button class="btn btn-ghost btn-sm" id="btnGuide" title="打开使用引导">❔ 使用引导</button>
+      <button class="btn btn-ghost btn-sm" id="btnRefresh" title="刷新当前页">↻ 刷新</button>
+    </header>
+
+    <div class="content">
+      <!-- ========== 工作台 ========== -->
+      <section class="view active" id="view-dashboard">
+        <div class="grid grid-5" id="statCards"></div>
+        <div class="grid grid-2" style="margin-top:18px">
+          <div class="card">
+            <div class="card-head"><h3>项目分类分布</h3></div>
+            <div class="card-body"><div id="catChart"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>最近项目</h3><span class="spacer"></span>
+              <button class="btn btn-sm" onclick="App.switchView('projects')">查看全部</button>
+            </div>
+            <div class="card-body tight"><div id="recentList"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== 项目列表 ========== -->
+      <section class="view" id="view-projects">
+        <div class="card">
+          <div class="card-head">
+            <h3>报销项目</h3><span class="spacer"></span>
+            <input class="input" id="projSearch" placeholder="搜索名称/编号/负责人" style="width:210px">
+            <select class="select" id="projCatFilter" style="width:130px"><option value="">全部分类</option></select>
+            <button class="btn btn-primary" id="btnNewProject">+ 新建项目</button>
+          </div>
+          <div class="card-body"><div class="grid grid-3" id="projectCards"></div></div>
+        </div>
+      </section>
+
+      <!-- ========== 项目详情 ========== -->
+      <section class="view" id="view-detail">
+        <div id="detailBox"></div>
+      </section>
+
+      <!-- ========== 票据中心 ========== -->
+      <section class="view" id="view-receipts">
+        <div id="receiptBox"></div>
+      </section>
+
+      <!-- ========== 设置 ========== -->
+      <section class="view" id="view-settings">
+        <div class="card">
+          <div class="card-head"><h3>差旅补助标准</h3></div>
+          <div class="card-body">
+            <div class="grid grid-3">
+              <div class="field">
+                <label>教师每日餐费（元）<span class="req">*</span></label>
+                <input class="input" type="number" id="set_meal_teacher" min="0" step="1">
+                <div class="hint">伙食补助费 = 每日餐费 × 出差天数</div>
+              </div>
+              <div class="field">
+                <label>教师每日市内交通补助（元）<span class="req">*</span></label>
+                <input class="input" type="number" id="set_city_teacher" min="0" step="1">
+                <div class="hint">市内交通费 = 每日补助 × 出差天数</div>
+              </div>
+              <div class="field">
+                <label>学生补助系数</label>
+                <input class="input" type="number" id="set_student_ratio" min="0" max="1" step="0.1">
+                <div class="hint">0.5 表示学生按教师标准减半</div>
+              </div>
+            </div>
+            <div id="stdPreview" style="margin-top:6px"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>单位与收款信息</h3></div>
+          <div class="card-body">
+            <div class="grid grid-2">
+              <div class="field"><label>单位名称</label><input class="input" id="set_org_name"></div>
+              <div class="field"><label>货币前缀</label><input class="input" id="set_currency_prefix"></div>
+              <div class="field"><label>收款单位名称</label><input class="input" id="set_payee_name" placeholder="留空则用单位名称"></div>
+              <div class="field"><label>开户银行</label><input class="input" id="set_payee_bank"></div>
+              <div class="field"><label>银行账号</label><input class="input" id="set_payee_account"></div>
+            </div>
+            <button class="btn btn-primary" id="btnSaveSettings">保存设置</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== 字典维护 ========== -->
+      <section class="view" id="view-dictionary">
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-head"><h3>学期 / 自然年</h3></div>
+            <div class="card-body">
+              <div class="grid grid-2" style="gap:10px">
+                <div class="field"><label>类型</label>
+                  <select class="select" id="p_kind"><option value="term">学期</option><option value="year">自然年</option></select>
+                </div>
+                <div class="field"><label>名称</label><input class="input" id="p_name" placeholder="如 2025-2026学年第1学期"></div>
+                <div class="field"><label>开始日期</label><input class="input" type="date" id="p_start"></div>
+                <div class="field"><label>结束日期</label><input class="input" type="date" id="p_end"></div>
+              </div>
+              <button class="btn btn-primary btn-sm" id="btnAddPeriod">+ 添加</button>
+              <div class="table-wrap" style="margin-top:14px"><table class="tb" id="periodTable"></table></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>学院 / 专业</h3></div>
+            <div class="card-body">
+              <div class="grid grid-2" style="gap:10px">
+                <div class="field"><label>学院名称</label><input class="input" id="c_name" placeholder="新增学院"></div>
+                <div class="field"><label>&nbsp;</label><button class="btn btn-primary btn-block" id="btnAddCollege">+ 添加学院</button></div>
+              </div>
+              <div class="grid grid-2" style="gap:10px;margin-top:4px">
+                <div class="field"><label>所属学院</label><select class="select" id="m_college"></select></div>
+                <div class="field"><label>专业名称</label><input class="input" id="m_name" placeholder="新增专业"></div>
+              </div>
+              <button class="btn btn-primary btn-sm" id="btnAddMajor">+ 添加专业</button>
+              <div class="table-wrap" style="margin-top:14px"><table class="tb" id="collegeTable"></table></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== 使用引导（内容由 App.renderGuide 动态生成） ========== -->
+      <section class="view" id="view-guide">
+        <div id="guideBox"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- ============ 弹窗容器 ============ -->
+<div class="modal-mask" id="modalMask"><div class="modal" id="modalBox"></div></div>
+<div class="lightbox" id="lightbox"><img id="lightboxImg" alt="票据预览"></div>
+<div class="toast-wrap" id="toastWrap"></div>
+
+<!-- 相对路径，理由同 CSS 引用 -->
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+<script>
+// file:// 协议下无法调用后端 API（无同源服务器）。给出明确指引，
+// 而不是让人对着一屏空白数据发呆。
+if (location.protocol === 'file:') {
+  document.addEventListener('DOMContentLoaded', function () {
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div style="position:fixed;inset:0;z-index:99999;background:rgba(28,37,48,.94);' +
+      'color:#eaf4f8;display:flex;align-items:center;justify-content:center;padding:24px">' +
+      '<div style="max-width:520px;line-height:1.9">' +
+      '<div style="font-size:19px;font-weight:700;margin-bottom:14px">请从服务地址打开本系统</div>' +
+      '<div style="color:#a9c4d4">你是用<strong style="color:#fff">双击 HTML 文件</strong>的方式打开的，' +
+      '这种方式无法连接后台数据库，所以看不到任何数据。</div>' +
+      '<div style="margin-top:18px;padding:14px 16px;background:rgba(255,255,255,.08);' +
+      'border-radius:8px;border-left:3px solid #b8860b">' +
+      '正确方式：双击项目根目录的 <strong style="color:#f0c674">启动报销系统.bat</strong>，' +
+      '或运行 <strong style="color:#f0c674">npm start</strong>，' +
+      '然后访问 <strong style="color:#7fd1e8">http://127.0.0.1:5180</strong></div>' +
+      '<div style="margin-top:18px;font-size:13px;color:#7f97a8">' +
+      '提示：本页样式是正常的，说明 CSS 已加载，只是缺数据源。</div>' +
+      '</div></div>');
+  });
+}
+</script>
+</body>
+</html>

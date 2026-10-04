@@ -1,0 +1,95 @@
+# =============================================================
+# 天津仁爱学院报销系统 · Nginx 反向代理配置
+#
+# 本文件是模板，不要直接启用。用 deploy.sh 生成实际配置：
+#   sudo bash deploy/deploy.sh --domain your.domain.com
+# 脚本会调用 render_nginx.py 把 __DOMAIN__ 替换掉，并按需剔除 HTTPS 块。
+# 手动生成等价命令：
+#   python3 deploy/render_nginx.py deploy/nginx.conf.template your.domain.com \
+#     /etc/nginx/conf.d/reimburse.conf [--no-https]
+#
+# 为什么必须走 Nginx：
+#   1) 5180 端口保持只监听 127.0.0.1，不直接暴露公网
+#   2) 提供 HTTPS（财务数据必须加密传输）
+#   3) Basic Auth 由应用层做，这里不再重复（两层鉴权易排查问题）
+# =============================================================
+
+upstream reimburse_backend {
+    server 127.0.0.1:5180;
+    keepalive 16;
+}
+
+# HTTP 全部跳转到 HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+
+    # certbot 验证目录必须放行，否则签证书会失败
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __DOMAIN__;
+
+    # ---- TLS 证书（certbot 签发后路径如下）----
+    # 未配 HTTPS 时可整段注释掉上面的 443 server，只保留 80
+    ssl_certificate     /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    # 安全响应头
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options    "nosniff" always;
+    add_header X-Frame-Options           "SAMEORIGIN" always;
+    add_header Referrer-Policy           "strict-origin-when-cross-origin" always;
+
+    # 财务票据可能较大（PDF/扫描件），上传放宽到 20M
+    client_max_body_size 20m;
+    # 上传 body 是流式的，关缓冲避免大文件落盘临时文件
+    proxy_request_buffering off;
+
+    access_log /var/log/nginx/reimburse.access.log;
+    error_log  /var/log/nginx/reimburse.error.log warn;
+
+    location / {
+        proxy_pass         http://reimburse_backend;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Basic Auth 需要 Authorization 头透传（默认会被 Nginx 保留，此行显式声明）
+        proxy_set_header Authorization     $http_authorization;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    120s;
+        proxy_read_timeout    120s;
+
+        # 下载导出件时不要缓冲，直接透传
+        proxy_buffering off;
+    }
+
+    # 健康检查独立 location，便于监控与探活（应用层该路径免鉴权）
+    location = /api/health {
+        proxy_pass       http://reimburse_backend;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+}
