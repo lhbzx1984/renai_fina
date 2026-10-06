@@ -210,7 +210,7 @@ function decodeHex(hex, font) {
       out += (cmap && cmap.get(code)) || (ttf && ttf.get(code)) || '';
     }
   }
-  return out || decodeUtf16be(Buffer.from(clean, 'hex'));
+  return out.replace(/[\u0000-\u0008\u000e-\u001f]/g, '') || '';
 }
 
 /** 展开对象流（/Type/ObjStm）：把内部对象 {num, body(Buffer)} 收集到 out */
@@ -295,14 +295,27 @@ function buildFontCmaps(numDicts, streamTexts, fontFiles) {
   return { byName, merged };
 }
 
-/** 字面串按当前字体解码：UCS2 走 UTF-16BE；单字节码简单字体逐字节查 ToUnicode */
+/** 字面串按当前字体解码：UCS2 走 UTF-16BE；CID 字体（codeBytes=2）按 2 字节分组查表；
+ *  单字节码简单字体逐字节查 ToUnicode。
+ *  坑：部分开票软件把 Identity-H 的 2 字节 CID 写进字面串 (+k)=0x2B6B，而非 hex 串。 */
 function decodeLiteralByFont(bytes, font) {
   if (font && font.ucs2 && bytes.length >= 2 && bytes.length % 2 === 0) {
     return decodeUtf16be(bytes);
   }
   const cmap = font && font.cmap;
   const ttf = font && font.ttf;
-  if ((cmap && cmap.size && (cmap.codeBytes || 2) === 1) || (ttf && bytes.length === 1)) {
+  if (font && ((cmap && cmap.size && (cmap.codeBytes || 2) === 2) || (!cmap?.size && ttf))
+    && bytes.length >= 2 && bytes.length % 2 === 0) {
+    let out = '', miss = 0;
+    for (let i = 0; i + 1 < bytes.length; i += 2) {
+      const cid = (bytes[i] << 8) | bytes[i + 1];
+      const ch = (cmap && cmap.get(cid)) || (ttf && ttf.get(cid)) || '';
+      if (!ch) miss++;
+      out += ch;
+    }
+    if (out.replace(/\s/g, '') && miss < out.length) return out;
+  }
+  if (cmap && cmap.size && (cmap.codeBytes || 2) === 1) {
     let out = '';
     for (const b of bytes) out += (cmap && cmap.get(b)) || (ttf && ttf.get(b)) || '';
     if (out.replace(/\s/g, '')) return out;

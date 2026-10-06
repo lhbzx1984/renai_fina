@@ -25,6 +25,12 @@ function extractFields(text) {
   const out = {};
   if (!text) return out;
   const t = String(text);
+  // 部分开票软件逐字符定位渲染，字段值被拆成「2 6 3 3 2 …」——按行压缩（行内拼回、
+  // 行间保留换行），既让锚点能命中，又不让相邻字段值互相粘连
+  const c = t.split('\n')
+    .map((l) => l.replace(/[\s\u0000-\u0008\u000e-\u001f]+/g, ''))
+    .filter(Boolean)
+    .join('\n');
 
   const patterns = {
     invoice_no: [
@@ -67,11 +73,15 @@ function extractFields(text) {
 
   for (const [key, list] of Object.entries(patterns)) {
     for (const re of list) {
+      // vendor 先在原文找（\s 排除依赖原文分行防跨块粘连）；其余直接用压缩文本
+      // （逐字符渲染的票字段值被拆成「2 6 3 3 2 …」，压缩后才能命中锚点）
       // /g 模式（如按单位后缀扫销售方）取最后一个匹配，其余取第一个
-      const m = re.global
-        ? (([...t.matchAll(re)].pop()) || null)
-        : t.match(re);
-      if (m) {
+      const scopes = key === 'vendor' ? [t, c] : [c];
+      for (const scope of scopes) {
+        const m = re.global
+          ? (([...scope.matchAll(re)].pop()) || null)
+          : scope.match(re);
+        if (!m) continue;
         let v = m[1] != null ? m[1] : m[0];
         // 行程双捕获组（出发/到达）拼成「A-B」
         if (key === 'itinerary' && m[2] != null) v = `${m[1]}-${m[2]}`;
@@ -89,10 +99,27 @@ function extractFields(text) {
         out[key] = v;
         break;
       }
+      if (out[key] != null) break;
     }
   }
 
-  // 铁路电子客票：站名布局无箭头，按「xx站」成对取（先出现的为出发站）
+  railwayStations(t, out);
+
+  // 兜底：¥ 前缀金额；再兜底取文中最后一个独立两位小数（客票价常分离渲染）
+  if (out.amount == null) {
+    let m = c.match(/[¥￥]\s*(\d{1,7}(?:\.\d{1,2})?)/) || t.match(/[¥￥]\s*(\d{1,7}(?:\.\d{1,2})?)/);
+    if (!m) {
+      const all = [...c.matchAll(/(?<![\d.]).{0,2}?(\d{1,7}\.\d{2})(?![\d.])/g)]
+        .map((x) => parseFloat(x[1])).filter((x) => x > 0 && x < 1e7);
+      if (all.length) m = [null, String(all[all.length - 1])];
+    }
+    if (m) out.amount = parseFloat(m[1]);
+  }
+  return out;
+}
+
+// 铁路电子客票：站名布局无箭头，按「xx站」成对取（先出现的为出发站）
+function railwayStations(t, out) {
   if (out.itinerary == null && /铁路|客票|车票/.test(t)) {
     const stations = [];
     for (const m of t.matchAll(/([\u4e00-\u9fa5]{2,8})\s*站(?![\u4e00-\u9fa5])/g)) {
@@ -101,18 +128,6 @@ function extractFields(text) {
     }
     if (stations.length === 2) out.itinerary = `${stations[0]}-${stations[1]}`;
   }
-
-  // 兜底：¥ 前缀金额；再兜底取文中最后一个独立两位小数（客票价常分离渲染）
-  if (out.amount == null) {
-    let m = t.match(/[¥￥]\s*(\d{1,7}(?:\.\d{1,2})?)/);
-    if (!m) {
-      const all = [...t.matchAll(/(?<![\d.]).{0,2}?(\d{1,7}\.\d{2})(?![\d.])/g)]
-        .map((x) => parseFloat(x[1])).filter((x) => x > 0 && x < 1e7);
-      if (all.length) m = [null, String(all[all.length - 1])];
-    }
-    if (m) out.amount = parseFloat(m[1]);
-  }
-  return out;
 }
 
 /** 依据字段特征猜测费用科目（只作预填，人工审核时可改） */
