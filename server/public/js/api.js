@@ -119,6 +119,60 @@ function confirmDialog(title, message, onYes) {
   });
 }
 
+/** 可输入 + 可下拉的候选框（替代 datalist：datalist 只显示与已填文本匹配的建议，
+ *  编辑已有值时点不出其他选项）。聚焦/点箭头列出全部候选，输入时包含匹配过滤，仍可自由手输。 */
+function attachCombo(input, options) {
+  const wrap = document.createElement('div');
+  wrap.className = 'combo';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'combo-btn'; btn.title = '展开选项'; btn.textContent = '▾';
+  wrap.appendChild(btn);
+  const panel = document.createElement('div');
+  panel.className = 'combo-panel';
+  wrap.appendChild(panel);
+
+  let hideTimer = null;
+  const cancelHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } };
+  const isOpen = () => panel.classList.contains('show');
+  const onDocDown = (e) => { if (!wrap.contains(e.target)) hide(); }; // 点击组件外收起
+  const hide = () => { cancelHide(); panel.classList.remove('show'); document.removeEventListener('mousedown', onDocDown, true); };
+  const show = (all) => {
+    const q = all ? '' : input.value.trim(); // 点箭头=列全部候选；输入时=按已填文本过滤
+    const list = q ? options.filter((x) => x.includes(q)) : options;
+    panel.innerHTML = list.length
+      ? list.map((x) => `<div class="combo-item" data-v="${esc(x)}">${esc(x)}</div>`).join('')
+      : '<div class="combo-empty">无匹配项，可直接输入</div>';
+    panel.classList.add('show');
+    document.removeEventListener('mousedown', onDocDown, true);
+    document.addEventListener('mousedown', onDocDown, true);
+  };
+
+  input.addEventListener('focus', () => show());
+  input.addEventListener('input', () => show());
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+  // 用 mousedown 做 toggle：preventDefault 防失焦，且此时 focus 尚未转移，不会与 focus 监听打架
+  btn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (isOpen()) hide();
+    else { input.focus(); show(true); }
+  });
+  panel.addEventListener('mousedown', (e) => {
+    const it = e.target.closest('.combo-item');
+    if (!it) return;
+    e.preventDefault(); // 保持焦点在 input，避免先触发收起
+    input.value = it.dataset.v;
+    hide();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  // 焦点离开组件（点击外部）后延迟收起，给「点箭头」留出时间窗
+  wrap.addEventListener('focusout', (e) => {
+    if (!wrap.contains(e.relatedTarget)) { cancelHide(); hideTimer = setTimeout(hide, 160); }
+  });
+  wrap.addEventListener('focusin', cancelHide);
+}
+
 function lightbox(src) {
   $('#lightboxImg').src = src;
   $('#lightbox').classList.add('show');

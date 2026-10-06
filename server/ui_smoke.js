@@ -169,6 +169,38 @@ async function run(){
     document.getElementById('mf_phone').value='13800000001';
     document.getElementById('mf_rank').value='二类';
     await wait(300);
+
+    L('== 5.1 专业下拉组件（combo）==');
+    const comboWrap = document.querySelector('#modalBox .combo');
+    need(!!comboWrap, '专业输入框已挂 combo 组件');
+    if (comboWrap) {
+      const comboPanel = comboWrap.querySelector('.combo-panel');
+      const comboBtn = comboWrap.querySelector('.combo-btn');
+      // 已填值的情况下点箭头也必须列出「全部」候选（datalist 时代只显示匹配自身的建议）
+      document.getElementById('mf_major').value = '数字媒体艺术';
+      comboBtn.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true}));
+      await wait(250);
+      let items = [...comboPanel.querySelectorAll('.combo-item')];
+      need(comboPanel.classList.contains('show') && items.length >= 1,
+        '点箭头展开候选 ' + items.length + ' 项（已填值时仍应列出全部）');
+      // 点选候选回填
+      const v0 = items.length ? items[0].dataset.v : '';
+      if (items.length) {
+        items[0].dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true}));
+        await wait(200);
+        need(document.getElementById('mf_major').value === v0, '点选候选回填：' + v0);
+      }
+      // 输入过滤 + 无匹配提示
+      document.getElementById('mf_major').value = '绝对不存在的专业XYZ';
+      document.getElementById('mf_major').dispatchEvent(new Event('input'));
+      await wait(200);
+      need(comboPanel.querySelectorAll('.combo-item').length === 0
+        && flat(comboPanel.textContent).indexOf('无匹配') >= 0, '无匹配时提示可直接输入');
+      document.getElementById('mf_major').value = '';
+      document.getElementById('mf_major').dispatchEvent(new Event('input'));
+      await wait(150);
+    }
+
     const mdays = document.getElementById('mf_days').value;
     need(mdays === '4', '成员表单自动带入行程天数 4，实际=' + mdays);
     const mh = document.getElementById('mf_dayhint').textContent;

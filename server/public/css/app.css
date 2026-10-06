@@ -182,6 +182,25 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%235a6b7c' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 11px center; padding-right: 28px; }
 .hint { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; line-height: 1.5; }
+
+/* 可输入 + 可下拉的候选组件（替代 datalist，后者只显示与已填文本匹配的建议） */
+.combo { position: relative; }
+.combo .input { padding-right: 30px; }
+.combo-btn {
+  position: absolute; top: 50%; right: 5px; transform: translateY(-50%);
+  border: none; background: none; cursor: pointer; color: var(--ink-3);
+  font-size: 11px; padding: 4px 6px; line-height: 1;
+}
+.combo-btn:hover { color: var(--brand-2); }
+.combo-panel {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  box-shadow: 0 10px 28px rgba(15, 40, 60, .16); max-height: 210px; overflow: auto; z-index: 60;
+}
+.combo-panel.show { display: block; }
+.combo-item { padding: 7px 11px; font-size: 12.5px; cursor: pointer; }
+.combo-item:hover, .combo-item.active { background: #eef6f9; }
+.combo-empty { padding: 8px 11px; font-size: 12px; color: var(--ink-3); }
 .check { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
 .check input { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; margin: 0; }
 

@@ -957,7 +957,7 @@ const App = {
         ? `候选项为「${esc(pcol.name)}」的 ${majors.length} 个专业`
         : `「${esc(pcol.name)}」暂无本科专业，可直接填写`)
       : '项目未指定学院，此处列出全部专业';
-    modal(m ? '编辑成员' : '添加教师 / 学生', `
+    const mform = modal(m ? '编辑成员' : '添加教师 / 学生', `
       <div class="field">
         <label>身份<span class="req">*</span></label>
         <div class="segment" id="mf_role">
@@ -973,8 +973,7 @@ const App = {
           <div class="hint">教师填工号，学生填学号</div>
         </div>
         <div class="field"><label>专业</label>
-          <input class="input" id="mf_major" list="majorList" value="${esc(m ? m.major || '' : '')}" placeholder="可从下拉选择或直接输入">
-          <datalist id="majorList">${majors.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
+          <input class="input" id="mf_major" value="${esc(m ? m.major || '' : '')}" placeholder="点右侧箭头下拉选择，或直接输入">
           <div class="hint">${majorHint}</div>
         </div>
         <div class="field"><label>电话</label><input class="input" id="mf_phone" value="${esc(m ? m.phone || '' : '')}"></div>
@@ -1010,6 +1009,7 @@ const App = {
         },
       ],
     });
+    attachCombo(mform.box.querySelector('#mf_major'), majors);
 
     const cfg = this.state.settings;
     const updHint = () => {
