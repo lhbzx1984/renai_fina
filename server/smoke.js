@@ -35,8 +35,20 @@ async function cleanStale() {
   const staleP = ((per.json && per.json.data && per.json.data.periods) || [])
     .filter((p) => /测试/.test(p.name || ''));
   for (const p of staleP) await req('DELETE', '/api/periods/' + p.id);
-  if (stale.length || staleP.length) console.log(`[清理] 残留测试数据：项目 ${stale.length} 个、期间 ${staleP.length} 个`);
-  return stale.length + staleP.length;
+  // 自定义字典项（项目分类 / 费用科目）同样不能留痕
+  const st = await req('GET', '/api/settings');
+  const d = (st.json && st.json.data) || {};
+  let dict = 0;
+  for (const b of (d.buckets || []).filter((x) => x.custom && /^(测试|冒烟)/.test(x.label))) {
+    await req('DELETE', `/api/dict/buckets/${b.key}`); dict++;
+  }
+  for (const c of (d.categories || []).filter((x) => x.custom && /^(测试|冒烟)/.test(x.label))) {
+    await req('DELETE', `/api/dict/categories/${c.key}`); dict++;
+  }
+  if (stale.length || staleP.length || dict) {
+    console.log(`[清理] 残留测试数据：项目 ${stale.length} 个、期间 ${staleP.length} 个、字典 ${dict} 项`);
+  }
+  return stale.length + staleP.length + dict;
 }
 
 (async () => {
@@ -69,6 +81,35 @@ async function cleanStale() {
   check('POST /periods', r.json.ok, r.json);
   const periodId = r.json.data.id;
   await req('DELETE', '/api/periods/' + periodId);
+
+  /* 1b. 项目分类 / 费用科目字典 */
+  console.log('\n[1b] 项目分类与费用科目');
+  r = await req('GET', '/api/settings');
+  const catKeys = (r.json.data.categories || []).map((c) => c.key);
+  check('新增项目分类：办公用品/耗材采购/设备采购/维修维保',
+    ['office', 'consumable', 'equipment', 'maintenance'].every((k) => catKeys.includes(k)), catKeys);
+  const bkKeys = (r.json.data.buckets || []).map((b) => b.key);
+  check('新增费用科目 8 项（耗材/办公/打印/维保/版面/专利/技术服务/外协）',
+    ['consumable_fee', 'office_fee', 'print_fee', 'maintain_fee', 'paper_fee', 'patent_fee', 'tech_fee', 'outsource_fee']
+      .every((k) => bkKeys.includes(k)), bkKeys);
+
+  r = await req('POST', '/api/dict/buckets', { label: '测试临时科目' });
+  check('POST 自定义费用科目', r.json.ok && r.json.data.item.custom === true, r.json);
+  const tmpBucket = r.json.ok ? r.json.data.item.key : '__none__';
+  r = await req('POST', '/api/dict/buckets', { label: '测试临时科目' });
+  check('重名科目被拒绝', !r.json.ok, r.json);
+  r = await req('DELETE', '/api/dict/buckets/hotel');
+  check('内置科目不可删除', !r.json.ok, r.json);
+  r = await req('DELETE', `/api/dict/buckets/${tmpBucket}`);
+  check('DELETE 自定义科目', r.json.ok, r.json);
+  r = await req('GET', '/api/settings');
+  check('自定义科目已清理干净',
+    !(r.json.data.buckets || []).some((b) => b.key === tmpBucket), (r.json.data.buckets || []).map((b) => b.key));
+
+  // 新分类建项目编号前缀（建后即删，不留测试数据）
+  r = await req('POST', '/api/projects', { name: '测试-设备采购编号', category: 'equipment', period_id: basePeriodId, college_id: collegeId });
+  check('设备采购项目编号前缀 SB', /^SB-\d{4}-\d{3}$/.test((r.json.data || {}).code || ''), r.json.data);
+  if (r.json.ok) await req('DELETE', `/api/projects/${r.json.data.id}`);
 
   /* 2. 项目 */
   console.log('\n[2] 项目（含差旅）');

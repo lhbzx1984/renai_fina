@@ -114,12 +114,23 @@ function extractFields(text) {
   return out;
 }
 
-/** 依据字段特征猜测费用科目 */
+/** 依据字段特征猜测费用科目（只作预填，人工审核时可改） */
+const CATEGORY_RULES = [
+  [/酒店|宾馆|住宿|客房|HOTEL|INN/i, 'hotel'],
+  [/出租|网约|滴滴|地铁|公交|客运|火车|高铁|铁路|客票|列车|航空|机票|车票|行程单|旅行社|代订/i, 'transport'],
+  [/餐|饭|food|餐费/i, 'city_trans'],
+  [/版面费|审稿费|论文|期刊|编辑部|出版/i, 'paper_fee'],
+  [/专利|知识产权|专利年费|代理费/i, 'patent_fee'],
+  [/技术服务|技术开发|技术咨询|软件服务|检测服务|测试服务/i, 'tech_fee'],
+  [/外协|协作费|委托加工|委托开发/i, 'outsource_fee'],
+  [/维修|维保|保养|修理|维护/i, 'maintain_fee'],
+  [/打印|印刷|复印|装订|图文|快印/i, 'print_fee'],
+  [/耗材|硒鼓|墨盒|碳粉|打印纸|文具|办公用品/i, 'office_fee'],
+  [/器材|材料费|配件|元器件|电子元件|实验耗材/i, 'consumable_fee'],
+];
 function guessCategory(fields, hint = '') {
   const s = `${hint} ${fields.itinerary || ''} ${fields.vendor || ''}`;
-  if (/酒店|宾馆|住宿|客房|HOTEL|INN/i.test(s)) return 'hotel';
-  if (/出租|网约|滴滴|地铁|公交|客运|火车|高铁|铁路|客票|列车|航空|机票|车票|行程单|旅行社|代订/i.test(s)) return 'transport';
-  if (/餐|饭|food|餐费/i.test(s)) return 'city_trans';
+  for (const [re, key] of CATEGORY_RULES) if (re.test(s)) return key;
   return 'other';
 }
 

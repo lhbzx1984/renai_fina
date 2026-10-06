@@ -27,6 +27,7 @@ const App = {
       await this.loadDictionary();
       await this.loadDashboard();
       await this.loadProjects();
+      this.renderCategoryFilter();
       this.renderSettings();
       this.maybeShowTour();
     } catch (e) {
@@ -49,13 +50,12 @@ const App = {
     $('#btnAddPeriod').onclick = () => this.addPeriod();
     $('#btnAddCollege').onclick = () => this.addCollege();
     $('#btnAddMajor').onclick = () => this.addMajor();
+    $('#btnAddCategory').onclick = () => this.addDictItem('categories');
+    $('#btnAddBucket').onclick = () => this.addDictItem('buckets');
 
     let t = null;
     $('#projSearch').oninput = () => { clearTimeout(t); t = setTimeout(() => this.renderProjectCards(), 220); };
     $('#projCatFilter').onchange = () => this.renderProjectCards();
-
-    $('#projCatFilter').innerHTML = '<option value="">全部分类</option>' +
-      this.state.categories.map((c) => `<option value="${c.key}">${esc(c.label)}</option>`).join('');
 
     // 回车提交弹窗内第一个输入框
     document.addEventListener('keydown', (e) => {
@@ -1558,7 +1558,7 @@ const App = {
         return `<tr>
                 <td>${stTag}</td>
                 <td>${esc(x.file_name || x.invoice_no || '手工录入')}</td>
-                <td>${esc((BUCKET_LABEL[x.category] || x.category))}</td>
+                <td>${esc(bucketLabel(x.category))}</td>
                 <td class="num">${x.amount != null ? '¥ ' + money(x.amount) : '—'}</td>
                 <td>${x.member_id ? '成员#' + x.member_id : '—'}</td>
                 <td>${esc(x.invoice_date || '—')}</td>
@@ -1634,7 +1634,64 @@ const App = {
     $('#set_payee_name').value = s.payee_name || '';
     $('#set_payee_bank').value = s.payee_bank || '';
     $('#set_payee_account').value = s.payee_account || '';
+    this.renderDictLists();
     this.renderStdPreview();
+  },
+
+  /* ---------- 项目分类 / 费用科目：内置 + 自定义 ---------- */
+  renderCategoryFilter() {
+    const sel = $('#projCatFilter');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">全部分类</option>' +
+      this.state.categories.map((c) => `<option value="${c.key}">${esc(c.label)}</option>`).join('');
+    sel.value = cur;
+  },
+
+  renderDictLists() {
+    const chip = (list, kind, extra) => list.map((x) => `
+      <span class="tag gray" style="margin:2px 3px;display:inline-flex;align-items:center;gap:4px">
+        ${esc(x.label)}${extra ? `<span style="opacity:.6;font-size:10.5px">${esc(extra(x))}</span>` : ''}
+        ${x.custom ? `<a href="javascript:void(0)" onclick="App.delDictItem('${kind}','${esc(x.key)}')" style="color:var(--err);font-weight:700">×</a>` : ''}
+      </span>`).join('');
+    const catBox = $('#catList'), bkBox = $('#bucketList');
+    if (catBox) catBox.innerHTML = chip(this.state.categories, 'categories', (x) => x.group || '');
+    if (bkBox) bkBox.innerHTML = chip(this.state.buckets, 'buckets');
+  },
+
+  async addDictItem(kind) {
+    const isCat = kind === 'categories';
+    const label = $(isCat ? '#nc_label' : '#nb_label').value.trim();
+    if (!label) { toast('请输入名称', 'warn'); return; }
+    try {
+      const body = { label };
+      if (isCat) body.group = $('#nc_group').value.trim();
+      const r = await Api.post(`/api/dict/${kind}`, body);
+      $(isCat ? '#nc_label' : '#nb_label').value = '';
+      if (isCat) $('#nc_group').value = '';
+      await this.reloadDict(r);
+      toast(`已添加「${label}」`, 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+  },
+
+  async delDictItem(kind, key) {
+    try {
+      const r = await Api.del(`/api/dict/${kind}/${encodeURIComponent(key)}`);
+      await this.reloadDict(r);
+      toast('已删除', 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+  },
+
+  /** 字典变更后：刷新全局字典 + 筛选器 + 列表，并重载已打开的项目详情 */
+  async reloadDict() {
+    const s = await Api.get('/api/settings');
+    this.state.settings = s.settings;
+    this.state.categories = s.categories;
+    this.state.buckets = s.buckets;
+    this.renderCategoryFilter();
+    this.renderDictLists();
+    await this.renderProjectCards();
+    if (this.state.currentId) await this.loadDetail(this.state.currentId);
   },
 
   renderStdPreview() {

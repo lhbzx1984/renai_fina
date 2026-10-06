@@ -125,6 +125,12 @@ route('POST', '/api/periods', async (ctx) => api.createPeriod(await ctx.json()))
 route('PUT', '/api/periods/:id', async (ctx) => api.updatePeriod(ctx.params.id, await ctx.json()));
 route('DELETE', '/api/periods/:id', (ctx) => api.deletePeriod(ctx.params.id));
 
+// 项目分类 / 费用科目：内置项 + 用户自定义项（自定义项在「设置」页增删）
+route('POST', '/api/dict/categories', async (ctx) => api.addDictItem('categories', await ctx.json()));
+route('DELETE', '/api/dict/categories/:key', (ctx) => api.deleteDictItem('categories', ctx.params.key));
+route('POST', '/api/dict/buckets', async (ctx) => api.addDictItem('buckets', await ctx.json()));
+route('DELETE', '/api/dict/buckets/:key', (ctx) => api.deleteDictItem('buckets', ctx.params.key));
+
 route('GET', '/api/colleges', () => api.listColleges());
 route('POST', '/api/colleges', async (ctx) => api.createCollege(await ctx.json()));
 route('PUT', '/api/colleges/:id', async (ctx) => api.updateCollege(ctx.params.id, await ctx.json()));

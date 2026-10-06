@@ -38,9 +38,11 @@ function transportExprOf(tickets) {
  * @param {object} cfg getAllSettings() 结果
  * @param {Array} members 项目成员（含 days / meal_rate / city_rate）
  * @param {Array} items 已审核票据归集明细 [{member_id, bucket, amount}]
- * @param {object} [opts] { route: '天津⇄合肥', trips: [{id, from_place, to_place, days, member_ids_parsed}] }
+ * @param {object} [opts] { route: '天津⇄合肥', trips: [{id, from_place, to_place, days, member_ids_parsed}],
+ *   bucketLabels: { bucketKey: 科目中文名 } }
  *   缺省起讫地点 opts.route；成员若绑定某段行程（trips[].member_ids 含该成员 id），
  *   则用该段行程的出发地/目的地与天数，实现「同一项目、不同人不同行程」。
+ *   bucketLabels 用于把非差旅科目（耗材费/打印费等）映射成中文名，落到「其他费用」明细。
  * @returns {{rows:Array, total:number, bucketTotal:object}}
  */
 function computeProject(cfg, members, items, opts = {}) {
@@ -56,14 +58,20 @@ function computeProject(cfg, members, items, opts = {}) {
     return null;
   };
   const defaultTrip = trips[0] || null;
+  // 差旅表固定五栏之外的科目（耗材费/打印费/版面费等）统一归集到「其他费用」，
+  // 明细里保留真实科目名，便于财务核对
+  const labels = opts.bucketLabels || {};
+  const TRAVEL = ['transport', 'hotel', 'city_trans', 'other'];
   const byMember = new Map();
   for (const it of items || []) {
     if (!it.member_id) continue;
     const cur = byMember.get(it.member_id) || { transport: 0, hotel: 0, city_trans: 0, other: 0, others: [], transportTickets: [] };
-    const b = ['transport', 'hotel', 'city_trans', 'other'].includes(it.bucket) ? it.bucket : 'other';
+    const b = TRAVEL.includes(it.bucket) ? it.bucket : 'other';
     cur[b] = round2(cur[b] + Number(it.amount || 0));
     if (b === 'transport') cur.transportTickets.push(round2(Number(it.amount) || 0));
-    if (b === 'other') cur.others.push({ item: it.note || '其他', amount: round2(it.amount || 0) });
+    if (b === 'other') {
+      cur.others.push({ item: it.note || labels[it.bucket] || '其他', amount: round2(it.amount || 0) });
+    }
     byMember.set(it.member_id, cur);
   }
 

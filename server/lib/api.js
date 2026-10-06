@@ -2,7 +2,7 @@
 /** 业务 API 处理：全部返回 {ok, data} 或 {ok:false, error} */
 const fs = require('node:fs');
 const path = require('node:path');
-const { db, getAllSettings, setSetting, DEFAULT_SETTINGS, UPLOAD_DIR, EXPORT_DIR } = require('./db');
+const { db, getSetting, getAllSettings, setSetting, DEFAULT_SETTINGS, UPLOAD_DIR, EXPORT_DIR } = require('./db');
 const { round2, rmbUpper } = require('./money');
 const { computeProject, calcDays, cnDate } = require('./calc');
 const { buildTravelDocx } = require('./docx');
@@ -10,27 +10,104 @@ const { buildFundXlsx } = require('./xlsx');
 const { mergePdfs } = require('./pdfmerge');
 const ocr = require('./ocr');
 
+/** 项目分类：内置项 + 用户在「设置」里自定义项 */
 const CATEGORIES = [
   { key: 'research', label: '科研', group: '科研' },
   { key: 'teaching', label: '教学', group: '教学' },
   { key: 'reform', label: '教改', group: '教学' },
   { key: 'training', label: '师资培训', group: '教学' },
   { key: 'competition', label: '竞赛', group: '竞赛' },
+  { key: 'office', label: '办公用品', group: '行政' },
+  { key: 'consumable', label: '耗材采购', group: '行政' },
+  { key: 'equipment', label: '设备采购', group: '资产' },
+  { key: 'maintenance', label: '维修维保', group: '资产' },
 ];
 
+/** 费用科目：前 4 项参与差旅表分栏计算，其余归集进「其他费用」按科目名展示 */
 const BUCKETS = [
   { key: 'transport', label: '城市间交通费' },
   { key: 'hotel', label: '住宿费' },
   { key: 'city_trans', label: '市内交通费' },
   { key: 'other', label: '其他费用' },
+  { key: 'consumable_fee', label: '耗材费' },
+  { key: 'office_fee', label: '办公用品费用' },
+  { key: 'print_fee', label: '打印费' },
+  { key: 'maintain_fee', label: '维修维保费用' },
+  { key: 'paper_fee', label: '论文版面费' },
+  { key: 'patent_fee', label: '专利服务费' },
+  { key: 'tech_fee', label: '技术服务费' },
+  { key: 'outsource_fee', label: '项目外协费' },
 ];
+
+/** 差旅表固定五栏（伙食补助为定额，不来自票据） */
+const TRAVEL_BUCKETS = ['transport', 'hotel', 'city_trans', 'other'];
+
+const CATEGORY_CODE_PREFIX = {
+  research: 'KY', teaching: 'JX', reform: 'JG', training: 'SP', competition: 'JS',
+  office: 'BG', consumable: 'HC', equipment: 'SB', maintenance: 'WB',
+};
 
 const bad = (msg) => ({ ok: false, error: String(msg) });
 const good = (data) => ({ ok: true, data });
 
+/* ============ 字典：内置 + 自定义 ============
+ * 自定义项以 JSON 数组存在 settings 表（custom_categories / custom_buckets），
+ * 与内置项合并后对外统一返回；内置项不可删除，避免历史数据失去归属。 */
+const DICT_SETTING_KEY = { categories: 'custom_categories', buckets: 'custom_buckets' };
+
+function readDictCustom(kind) {
+  const raw = getSetting(DICT_SETTING_KEY[kind]);
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x) => x && x.key && x.label) : [];
+  } catch (_) { return []; }
+}
+function writeDictCustom(kind, list) {
+  setSetting(DICT_SETTING_KEY[kind], JSON.stringify(list));
+}
+function allCategories() { return [...CATEGORIES, ...readDictCustom('categories')]; }
+function allBuckets() { return [...BUCKETS, ...readDictCustom('buckets')]; }
+/** 票据归集时的合法科目集合（内置 + 自定义） */
+function bucketKeySet() { return new Set(allBuckets().map((b) => b.key)); }
+function bucketLabelMap() { return Object.fromEntries(allBuckets().map((b) => [b.key, b.label])); }
+
+function addDictItem(kind, body) {
+  const builtins = kind === 'categories' ? CATEGORIES : BUCKETS;
+  const custom = readDictCustom(kind);
+  const label = String((body && body.label) || '').trim().slice(0, 20);
+  if (!label) return bad('名称不能为空');
+  if ([...builtins, ...custom].some((x) => x.label === label)) return bad(`「${label}」已存在`);
+  let key = String((body && body.key) || '').trim();
+  if (key) {
+    if (!/^[a-z][a-z0-9_]{1,23}$/.test(key)) return bad('标识只能用小写字母/数字/下划线，且以字母开头');
+    if (builtins.some((x) => x.key === key) || custom.some((x) => x.key === key)) return bad(`标识「${key}」已存在`);
+  } else {
+    key = `c_${Date.now().toString(36)}`;
+  }
+  const item = { key, label, custom: true };
+  if (kind === 'categories') item.group = String((body && body.group) || '').trim().slice(0, 10) || '自定义';
+  custom.push(item);
+  writeDictCustom(kind, custom);
+  return good({ item, list: kind === 'categories' ? allCategories() : allBuckets() });
+}
+
+function deleteDictItem(kind, key) {
+  const builtins = kind === 'categories' ? CATEGORIES : BUCKETS;
+  if (builtins.some((x) => x.key === key)) return bad('内置项不可删除');
+  const custom = readDictCustom(kind);
+  const next = custom.filter((x) => x.key !== key);
+  if (next.length === custom.length) return bad('条目不存在');
+  writeDictCustom(kind, next);
+  return good({ key, list: kind === 'categories' ? allCategories() : allBuckets() });
+}
+
 /* ============ 设置 ============ */
 function getSettings() {
-  return good({ settings: getAllSettings(), defaults: DEFAULT_SETTINGS, categories: CATEGORIES, buckets: BUCKETS });
+  return good({
+    settings: getAllSettings(), defaults: DEFAULT_SETTINGS,
+    categories: allCategories(), buckets: allBuckets(),
+  });
 }
 function updateSettings(body) {
   const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), 'payee_bank', 'payee_account', 'payee_name']);
@@ -164,7 +241,8 @@ function getProject(id) {
     ? `${mainTrip.from_place}⇄${mainTrip.to_place}`
     : '';
   // 每人起讫地点 = 其绑定行程的出发地/目的地（默认套用主行程）
-  const calc = computeProject(cfg, members, items, { route, trips });
+  // bucketLabels：新增费用科目（耗材费/打印费等）归集进「其他费用」时，明细要显示真实科目名
+  const calc = computeProject(cfg, members, items, { route, trips, bucketLabels: bucketLabelMap() });
   const receipts = db.prepare('SELECT * FROM receipts WHERE project_id=? ORDER BY ocr_status, id DESC').all(id);
   const pending = receipts.filter((r) => r.ocr_status === 'pending').length;
   return good({
@@ -197,7 +275,7 @@ function createProject(body) {
 }
 
 function autoCode(category) {
-  const prefix = { research: 'KY', teaching: 'JX', reform: 'JG', training: 'SP', competition: 'JS' }[category] || 'BX';
+  const prefix = CATEGORY_CODE_PREFIX[category] || 'BX';
   const year = new Date().getFullYear();
   // 用「当前最大序号 + 1」而非「条数 + 1」：删除项目后条数会回落，COUNT+1 会撞上已有编号。
   const rows = db.prepare('SELECT code FROM projects WHERE code LIKE ?').all(`${prefix}-${year}-%`);
@@ -449,7 +527,7 @@ function reviewReceipt(id, body) {
     for (const it of items) {
       db.prepare('INSERT INTO receipt_items(receipt_id,member_id,bucket,amount,note) VALUES(?,?,?,?,?)')
         .run(id, it.member_id || memberId,
-          ['transport', 'hotel', 'city_trans', 'other'].includes(it.bucket) ? it.bucket : 'other',
+          bucketKeySet().has(it.bucket) ? it.bucket : 'other',
           round2(it.amount), it.note || null);
     }
   }
@@ -642,7 +720,7 @@ function dashboard() {
       (SELECT COALESCE(SUM(amount),0) FROM receipts WHERE ocr_status='approved') amount`).get();
   const byCat = db.prepare('SELECT category, COUNT(*) n, COALESCE(SUM(budget),0) b FROM projects GROUP BY category').all();
   const recent = db.prepare('SELECT * FROM projects ORDER BY updated_at DESC LIMIT 6').all().map(decorateProject);
-  const labels = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]));
+  const labels = Object.fromEntries(allCategories().map((c) => [c.key, c.label]));
   return good({
     settings: cfg,
     stat: { ...stat, amount: round2(stat.amount) },
@@ -694,5 +772,6 @@ module.exports = {
   listReceipts, createReceipt, uploadReceipts, updateReceipt, reviewReceipt, deleteReceipt, reocrReceipt,
   importReceipts, receiptTemplate,
   exportTravelDocx, exportFundXlsx, buildTravelPayload, lastExport, mergeReceiptsPdf,
+  addDictItem, deleteDictItem, allCategories, allBuckets,
   dashboard, CATEGORIES, BUCKETS,
 };

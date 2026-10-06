@@ -129,8 +129,17 @@ const CAT_LABEL = { research: '科研', teaching: '教学', reform: '教改', tr
 const CAT_CLASS = { research: '', teaching: 'green', reform: 'purple', training: 'gold', competition: 'red' };
 const BUCKET_LABEL = { transport: '城市间交通费', hotel: '住宿费', city_trans: '市内交通费', other: '其他费用' };
 
+/** 优先取服务端下发的字典（含设置页新增的自定义项），字典未加载时回落到内置表 */
+const dictLabel = (listName, k, fallback) => {
+  const list = (window.App && App.state && App.state[listName]) || [];
+  const hit = list.find((x) => x.key === k);
+  return hit ? hit.label : (fallback[k] || k);
+};
+function catLabel(k) { return dictLabel('categories', k, CAT_LABEL); }
+function bucketLabel(k) { return dictLabel('buckets', k, BUCKET_LABEL); }
+
 function catTag(k) {
-  return `<span class="tag ${CAT_CLASS[k] || ''}">${esc(CAT_LABEL[k] || k)}</span>`;
+  return `<span class="tag ${CAT_CLASS[k] || ''}">${esc(catLabel(k))}</span>`;
 }
 
 function emptyState(icon, text, sub) {

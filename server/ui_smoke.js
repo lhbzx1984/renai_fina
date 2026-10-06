@@ -288,6 +288,34 @@ async function run(){
     // 复原
     await Api.put('/api/settings', {meal_teacher:100});
 
+    L('== 8.5 项目分类 / 费用科目（设置页维护）==');
+    const catBoxTxt = flat(document.getElementById('catList').textContent);
+    need(['办公用品','耗材采购','设备采购','维修维保'].every(x => catBoxTxt.indexOf(x) >= 0),
+      '设置页列出新增项目分类：' + catBoxTxt.slice(0,140));
+    const bkBoxTxt = flat(document.getElementById('bucketList').textContent);
+    need(['耗材费','办公用品费用','打印费','维修维保费用','论文版面费','专利服务费','技术服务费','项目外协费'].every(x => bkBoxTxt.indexOf(x) >= 0),
+      '设置页列出新增费用科目：' + bkBoxTxt.slice(0,240));
+    // 新增自定义科目 -> 列表立即出现 -> 再删除（不留测试痕）
+    document.getElementById('nb_label').value = 'UI烟测临时科目';
+    document.getElementById('btnAddBucket').click();
+    await wait(900);
+    const bk2 = flat(document.getElementById('bucketList').textContent);
+    need(bk2.indexOf('UI烟测临时科目') >= 0, '新增自定义科目后列表立即出现：' + bk2.slice(-60));
+    const tmpB = App.state.buckets.find(b => b.label === 'UI烟测临时科目');
+    need(!!(tmpB && tmpB.custom), '自定义项带 custom 标记（内置项不可删）');
+    if (tmpB) { await Api.del('/api/dict/buckets/' + tmpB.key); await App.reloadDict(); await wait(500); }
+    const bk3 = flat(document.getElementById('bucketList').textContent);
+    need(bk3.indexOf('UI烟测临时科目') < 0, '删除自定义科目后列表已移除');
+    // 新建项目弹窗的分类下拉应含新分类
+    document.getElementById('btnNewProject').click();
+    await wait(500);
+    const catOpts = Array.from(document.getElementById('pf_category').options).map(o => o.textContent);
+    need(['办公用品','耗材采购','设备采购','维修维保'].every(x => catOpts.indexOf(x) >= 0),
+      '新建项目分类下拉含新分类：' + catOpts.join('/'));
+    const closeX = document.querySelector('#modalBox [data-close]');
+    if (closeX) closeX.click();
+    await wait(300);
+
     L('== 9. 字典页 ==');
     App.switchView('dictionary');
     await wait(500);
