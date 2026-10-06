@@ -9,6 +9,7 @@ const { buildTravelDocx } = require('./docx');
 const { buildFundXlsx } = require('./xlsx');
 const { mergePdfs } = require('./pdfmerge');
 const ocr = require('./ocr');
+const { sendMail } = require('./mailer');
 
 /** 项目分类：内置项 + 用户在「设置」里自定义项 */
 const CATEGORIES = [
@@ -103,9 +104,17 @@ function deleteDictItem(kind, key) {
 }
 
 /* ============ 设置 ============ */
+/** 下发到浏览器的设置：SMTP 授权码不出现在响应里，只给「是否已配置」布尔值 */
+function publicSettings() {
+  const s = getAllSettings();
+  s.mail_smtp_pass_set = !!s.mail_smtp_pass;
+  s.mail_smtp_pass = '';
+  return s;
+}
+
 function getSettings() {
   return good({
-    settings: getAllSettings(), defaults: DEFAULT_SETTINGS,
+    settings: publicSettings(), defaults: DEFAULT_SETTINGS,
     categories: allCategories(), buckets: allBuckets(),
   });
 }
@@ -114,6 +123,12 @@ function updateSettings(body) {
   let n = 0;
   for (const [k, v] of Object.entries(body || {})) {
     if (!allowed.has(k)) continue;
+    // 授权码前端拿不到明文：空串/掩码=不修改，__CLEAR__=清除
+    if (k === 'mail_smtp_pass') {
+      const sv = String(v);
+      if (sv === '' || /^•+$/.test(sv)) continue;
+      if (sv === '__CLEAR__') { setSetting(k, ''); n++; continue; }
+    }
     if (k.startsWith('meal_') || k.startsWith('city_') || k === 'student_ratio' || k === 'travel_day_free_meal') {
       const num = Number(v);
       if (Number.isNaN(num) || num < 0) continue;
@@ -124,7 +139,136 @@ function updateSettings(body) {
     n++;
   }
   if (n === 0) return bad('没有可更新的设置项');
-  return good({ settings: getAllSettings() });
+  return good({ settings: publicSettings() });
+}
+
+/* ============ 发票邮件发送 ============ */
+/** 读取邮件配置并校验完整性 */
+function mailConfig() {
+  const s = getAllSettings();
+  const missing = [];
+  if (!s.mail_to) missing.push('收件人邮箱');
+  if (!s.mail_from) missing.push('发件人邮箱');
+  if (!s.mail_smtp_host) missing.push('SMTP 服务器');
+  if (!s.mail_smtp_user) missing.push('SMTP 账号');
+  if (!s.mail_smtp_pass) missing.push('SMTP 授权码');
+  return {
+    ok: missing.length === 0,
+    missing,
+    smtp: {
+      host: s.mail_smtp_host, port: Number(s.mail_smtp_port) || 465,
+      secure: String(s.mail_smtp_secure) !== '0',
+      user: s.mail_smtp_user, pass: s.mail_smtp_pass,
+    },
+    from: s.mail_from, fromName: s.mail_from_name, to: s.mail_to,
+  };
+}
+
+function mailStatus() {
+  const c = mailConfig();
+  return good({
+    configured: c.ok,
+    missing: c.missing,
+    to: c.to, from: c.from, fromName: c.fromName,
+    host: c.smtp.host, port: c.smtp.port, secure: c.smtp.secure,
+    user: c.smtp.user, passSet: !!c.smtp.pass,
+  });
+}
+
+/** 列出某项目可作为附件发送的 PDF 票据 */
+function projectPdfReceipts(projectId, onlyApproved) {
+  const rows = db.prepare('SELECT * FROM receipts WHERE project_id=? ORDER BY id').all(projectId);
+  const out = [];
+  let skipped = 0;
+  for (const r of rows) {
+    const isPdf = /pdf/i.test(r.mime || '') || /\.pdf$/i.test(r.file_name || '') || /\.pdf$/i.test(r.file_path || '');
+    if (!isPdf || !r.file_path) { skipped++; continue; }
+    if (onlyApproved && r.ocr_status !== 'approved') { skipped++; continue; }
+    const fp = path.join(UPLOAD_DIR, path.basename(r.file_path));
+    if (!fs.existsSync(fp)) { skipped++; continue; }
+    out.push({ row: r, buf: fs.readFileSync(fp), name: r.file_name || path.basename(r.file_path) });
+  }
+  return { files: out, skipped };
+}
+
+/** 把项目全部 PDF 发票逐张作为附件发到指定邮箱 */
+async function sendProjectInvoices(projectId, body = {}) {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
+  if (!p) return bad('项目不存在');
+  const c = mailConfig();
+  if (!c.ok) return bad('邮件还没配置好，缺：' + c.missing.join('、') + '（到「设置 → 发票邮件发送」填写）');
+
+  const onlyApproved = body.onlyApproved !== false; // 默认只发已审核通过的票据
+  const { files, skipped } = projectPdfReceipts(projectId, onlyApproved);
+  if (!files.length) {
+    return bad('这个项目没有可发送的 PDF 发票' + (onlyApproved ? '（仅发送已审核通过的票据；当前 0 张）' : ''));
+  }
+
+  const to = String(body.to || c.to).trim();
+  const total = files.reduce((s, f) => s + Number(f.row.amount || 0), 0);
+  const catLabel = (allCategories().find((x) => x.key === p.category) || {}).label || p.category || '';
+
+  // 明细：票号 / 销方 / 金额 / 日期，方便对方核对
+  const lines = files.map((f, i) =>
+    `${String(i + 1).padStart(2, '0')}. ${f.row.invoice_no || '—'}  ${f.row.vendor || '（无销方）'}  ￥${Number(f.row.amount || 0).toFixed(2)}  ${f.row.invoice_date || '—'}`
+  );
+  const text = [
+    `项目名称：${p.name}`,
+    `项目编号：${p.code || '—'}`,
+    `项目分类：${catLabel}`,
+    `负责人：${p.leader || '—'}`,
+    `发票数量：${files.length} 张${onlyApproved ? '（仅已审核通过）' : ''}`,
+    `金额合计：￥${total.toFixed(2)}`,
+    `发送时间：${new Date().toLocaleString('zh-CN')}`,
+    '',
+    '发票明细：',
+    ...lines,
+    '',
+    '本邮件由天津仁爱学院报销系统自动发送，附件为该项目票据原件（PDF）。',
+  ].join('\n');
+
+  const subject = String(body.subject || `[发票] ${p.code || ''} ${p.name} 共 ${files.length} 张`);
+  try {
+    const r = await sendMail(c.smtp, {
+      from: c.from, fromName: c.fromName || '天津仁爱学院报销系统',
+      to, subject, text,
+      attachments: files.map((f, i) => ({
+        filename: `${String(i + 1).padStart(2, '0')}_${p.code || 'project'}_${f.name}`,
+        content: f.buf,
+        contentType: 'application/pdf',
+      })),
+    });
+    return good({
+      to: r.recipients.join('; '), subject, count: files.length, skipped,
+      total: total, bytes: r.bytes,
+    });
+  } catch (e) {
+    return bad('发送失败：' + (e && e.message ? e.message : String(e)));
+  }
+}
+
+/** 发一封无附件的测试邮件，用来验证 SMTP 配置是否可用 */
+async function sendTestMail(body = {}) {
+  const c = mailConfig();
+  if (!c.ok) return bad('邮件还没配置好，缺：' + c.missing.join('、'));
+  const to = String((body && body.to) || c.to).trim();
+  try {
+    await sendMail(c.smtp, {
+      from: c.from, fromName: c.fromName || '天津仁爱学院报销系统',
+      to, subject: '【测试】天津仁爱学院报销系统邮件配置正常',
+      text: [
+        '这是一封测试邮件，收到说明 SMTP 配置可用。',
+        '',
+        `发件人：${c.from}`,
+        `SMTP：${c.smtp.host}:${c.smtp.port}${c.smtp.secure ? '（SSL）' : '（明文）'}`,
+        `时间：${new Date().toLocaleString('zh-CN')}`,
+      ].join('\n'),
+      attachments: [],
+    });
+    return good({ to });
+  } catch (e) {
+    return bad('测试发送失败：' + (e && e.message ? e.message : String(e)));
+  }
 }
 
 /* ============ 字典 ============ */
@@ -921,4 +1065,5 @@ module.exports = {
   listAiQueue, applyAiFields, skipAiReceipt,
   addDictItem, deleteDictItem, allCategories, allBuckets,
   dashboard, CATEGORIES, BUCKETS,
+  mailStatus, sendProjectInvoices, sendTestMail,
 };

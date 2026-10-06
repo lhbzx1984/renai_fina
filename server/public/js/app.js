@@ -46,6 +46,8 @@ const App = {
     $('#btnRefresh').onclick = () => this.refreshCurrent();
     $('#btnGuide').onclick = () => this.switchView('guide');
     $('#btnSaveSettings').onclick = () => this.saveSettings();
+    $('#btnSaveSettings2').onclick = () => this.saveSettings();
+    $('#btnTestMail').onclick = () => this.testMail();
     $('#btnNewProject').onclick = () => this.openProjectForm();
     $('#btnAddPeriod').onclick = () => this.addPeriod();
     $('#btnAddCollege').onclick = () => this.addCollege();
@@ -1043,6 +1045,7 @@ const App = {
           <span class="tag ${pending.length ? 'red' : 'green'}">${pending.length ? `${pending.length} 张待审核` : '已全部审核'}</span>
           <span class="spacer"></span>
           <button class="btn btn-sm btn-ghost" onclick="App.printReceipts(${p.id},${d.receipts.length})">🖨 打印全部票据</button>
+          <button class="btn btn-sm" onclick="App.sendProjectInvoices()">📧 发送发票到邮箱</button>
           <button class="btn btn-sm" onclick="App.openImportDialog(${p.id})">批量导入</button>
           <button class="btn btn-primary btn-sm" onclick="App.openUploadDialog(${p.id})">+ 上传票据</button>
         </div>
@@ -1664,8 +1667,75 @@ const App = {
     $('#set_payee_name').value = s.payee_name || '';
     $('#set_payee_bank').value = s.payee_bank || '';
     $('#set_payee_account').value = s.payee_account || '';
+    $('#set_mail_to').value = s.mail_to || '';
+    $('#set_mail_from').value = s.mail_from || '';
+    $('#set_mail_from_name').value = s.mail_from_name || '';
+    $('#set_mail_smtp_host').value = s.mail_smtp_host || '';
+    $('#set_mail_smtp_port').value = s.mail_smtp_port || '';
+    $('#set_mail_smtp_secure').checked = String(s.mail_smtp_secure) !== '0';
+    $('#set_mail_smtp_user').value = s.mail_smtp_user || '';
+    // 授权码不下发，已配置时给占位掩码；留空即表示不修改
+    $('#set_mail_smtp_pass').value = '';
+    $('#set_mail_smtp_pass').placeholder = s.mail_smtp_pass_set ? '已保存（留空则不修改）' : '邮箱网页端生成的授权码，非登录密码';
+    this.renderMailStatus();
     this.renderDictLists();
     this.renderStdPreview();
+  },
+
+  /* ---------- 发票邮件发送 ---------- */
+  renderMailStatus() {
+    const s = this.state.settings;
+    const missing = [
+      !s.mail_to && '收件人邮箱', !s.mail_from && '发件人邮箱',
+      !s.mail_smtp_host && 'SMTP 服务器', !s.mail_smtp_user && 'SMTP 账号',
+      !s.mail_smtp_pass_set && 'SMTP 授权码',
+    ].filter(Boolean);
+    const hint = $('#mailStatusHint');
+    if (hint) {
+      hint.textContent = missing.length ? '待完善：' + missing.join('、') : '已配置完成';
+      hint.style.color = missing.length ? 'var(--warn, #b26a00)' : 'var(--ink-3)';
+    }
+  },
+
+  async clearMailPass() {
+    try {
+      const r = await Api.put('/api/settings', { mail_smtp_pass: '__CLEAR__' });
+      this.state.settings = r.settings;
+      $('#set_mail_smtp_pass').value = '';
+      $('#set_mail_smtp_pass').placeholder = '邮箱网页端生成的授权码，非登录密码';
+      this.renderMailStatus();
+      toast('已清除保存的授权码', 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+  },
+
+  async testMail() {
+    try {
+      $('#btnTestMail').disabled = true;
+      const r = await Api.post('/api/mail/test', {});
+      toast('测试邮件已发往 ' + r.to, 'ok');
+    } catch (e) {
+      toast(e.message, 'err');
+    } finally {
+      $('#btnTestMail').disabled = false;
+    }
+  },
+
+  /** 项目详情页：把该项目的 PDF 发票逐张发到指定邮箱 */
+  async sendProjectInvoices() {
+    const d = this.state.detail;
+    if (!d) return;
+    const pdfs = d.receipts.filter((r) => /pdf/i.test(r.mime || '') || /\.pdf$/i.test(r.file_name || ''));
+    const approved = pdfs.filter((r) => r.ocr_status === 'approved');
+    const n = approved.length;
+    if (!n) { toast('这个项目还没有已审核通过的 PDF 发票', 'warn'); return; }
+    const s = this.state.settings;
+    const to = s.mail_to || '';
+    confirmDialog('发送发票到邮箱', `将把本项目 ${n} 张已审核通过的 PDF 发票作为附件，发送到 ${to || '（未配置收件人）'}。${pdfs.length > n ? `另有 ${pdfs.length - n} 张未审核票据不会发送。` : ''}`, async () => {
+      try {
+        const r = await Api.post(`/api/projects/${d.project.id}/send-invoices`, { onlyApproved: true });
+        toast(`已发送 ${r.count} 张发票到 ${r.to}`, 'ok');
+      } catch (e) { toast(e.message, 'err'); }
+    });
   },
 
   /* ---------- 项目分类 / 费用科目：内置 + 自定义 ---------- */
@@ -1750,10 +1820,19 @@ const App = {
         payee_name: $('#set_payee_name').value.trim(),
         payee_bank: $('#set_payee_bank').value.trim(),
         payee_account: $('#set_payee_account').value.trim(),
+        mail_to: $('#set_mail_to').value.trim(),
+        mail_from: $('#set_mail_from').value.trim(),
+        mail_from_name: $('#set_mail_from_name').value.trim(),
+        mail_smtp_host: $('#set_mail_smtp_host').value.trim(),
+        mail_smtp_port: $('#set_mail_smtp_port').value.trim(),
+        mail_smtp_secure: $('#set_mail_smtp_secure').checked ? '1' : '0',
+        mail_smtp_user: $('#set_mail_smtp_user').value.trim(),
+        mail_smtp_pass: $('#set_mail_smtp_pass').value, // 留空表示不修改
       });
       this.state.settings = r.settings;
       toast('设置已保存，新标准立即生效', 'ok');
       this.renderStdPreview();
+      this.renderMailStatus();
       if (this.state.currentId) await this.loadDetail(this.state.currentId);
     } catch (e) { toast(e.message, 'err'); }
   },

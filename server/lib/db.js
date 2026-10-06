@@ -189,6 +189,15 @@ const DEFAULT_SETTINGS = {
   org_name: '天津仁爱学院',
   travel_day_free_meal: '0',// 免伙食补助天数（首末日等政策，预留）
   currency_prefix: '人民币',
+  // 发票邮件发送（收件人默认发票归集邮箱，可在设置页改）
+  mail_to: '13752070316@fapiao56.com',
+  mail_from: '',            // 发件人邮箱（网易 163 等）
+  mail_from_name: '天津仁爱学院报销系统',
+  mail_smtp_host: 'smtp.163.com',
+  mail_smtp_port: '465',
+  mail_smtp_secure: '1',    // 1=465 隐式 SSL；0=明文 25/587
+  mail_smtp_user: '',       // SMTP 账号（一般与发件人相同）
+  mail_smtp_pass: '',       // 授权码：仅存本地库，接口下发时自动脱敏
 };
 
 function getSetting(key) {

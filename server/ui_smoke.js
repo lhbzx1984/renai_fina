@@ -320,6 +320,16 @@ async function run(){
     // 复原
     await Api.put('/api/settings', {meal_teacher:100});
 
+    L('== 8.2 发票邮件发送（设置页）==');
+    need(!!document.getElementById('set_mail_to'), '设置页含「发票邮件发送」收件人输入框');
+    need(document.getElementById('set_mail_to').value === '13752070316@fapiao56.com',
+      '收件人默认 13752070316@fapiao56.com，实际=' + document.getElementById('set_mail_to').value);
+    need(!!document.getElementById('btnTestMail') && !!document.getElementById('set_mail_smtp_pass'),
+      '含测试邮件按钮与授权码输入框（type=' + document.getElementById('set_mail_smtp_pass').type + '）');
+    need(document.getElementById('set_mail_smtp_pass').value === '', '授权码不回显明文');
+    const msHint = flat(document.getElementById('mailStatusHint').textContent);
+    need(/待完善|已配置/.test(msHint), '邮件配置状态提示已渲染：' + msHint);
+
     L('== 8.5 项目分类 / 费用科目（设置页维护）==');
     const catBoxTxt = flat(document.getElementById('catList').textContent);
     need(['办公用品','耗材采购','设备采购','维修维保'].every(x => catBoxTxt.indexOf(x) >= 0),

@@ -122,6 +122,58 @@
             <button class="btn btn-primary" id="btnSaveSettings">保存设置</button>
           </div>
         </div>
+        <div class="card">
+          <div class="card-head"><h3>发票邮件发送</h3><span class="spacer"></span><span class="hint" id="mailStatusHint"></span></div>
+          <div class="card-body">
+            <div class="grid grid-2">
+              <div class="field">
+                <label>收件人邮箱<span class="req">*</span></label>
+                <input class="input" id="set_mail_to" placeholder="如：13752070316@fapiao56.com">
+                <div class="hint">发票归集邮箱；多个收件人用英文分号分隔</div>
+              </div>
+              <div class="field">
+                <label>发件人邮箱<span class="req">*</span></label>
+                <input class="input" id="set_mail_from" placeholder="如：xxxxxx@163.com">
+                <div class="hint">用网易邮箱时填完整邮箱地址</div>
+              </div>
+              <div class="field">
+                <label>发件人显示名</label>
+                <input class="input" id="set_mail_from_name" placeholder="天津仁爱学院报销系统">
+              </div>
+              <div class="field">
+                <label>SMTP 服务器</label>
+                <input class="input" id="set_mail_smtp_host" placeholder="smtp.163.com">
+                <div class="hint">网易 163：smtp.163.com · QQ：smtp.qq.com · 腾讯企业邮：smtp.exmail.qq.com</div>
+              </div>
+              <div class="field">
+                <label>SMTP 端口</label>
+                <input class="input" type="number" id="set_mail_smtp_port" placeholder="465">
+              </div>
+              <div class="field">
+                <label>SSL 加密</label>
+                <div class="check" style="padding-top:6px">
+                  <input type="checkbox" id="set_mail_smtp_secure"><span>465 端口请勾选（隐式 SSL）</span>
+                </div>
+              </div>
+              <div class="field">
+                <label>SMTP 账号<span class="req">*</span></label>
+                <input class="input" id="set_mail_smtp_user" placeholder="一般与发件人邮箱相同">
+              </div>
+              <div class="field">
+                <label>SMTP 授权码<span class="req">*</span></label>
+                <input class="input" type="password" id="set_mail_smtp_pass" placeholder="邮箱网页端生成的授权码，非登录密码" autocomplete="new-password">
+                <div class="hint" id="mailPassHint">仅保存在本机数据库，接口不会回传明文。
+                  <a href="javascript:void(0)" onclick="App.clearMailPass()">清除已保存的授权码</a>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn btn-primary" id="btnSaveSettings2">保存设置</button>
+              <button class="btn" id="btnTestMail">发送测试邮件</button>
+              <span class="hint" id="mailTip"></span>
+            </div>
+          </div>
+        </div>
 
         <div class="grid grid-2">
           <div class="card">

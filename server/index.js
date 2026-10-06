@@ -176,6 +176,12 @@ route('POST', '/api/receipts/:id/review', async (ctx) => api.reviewReceipt(ctx.p
 route('POST', '/api/receipts/:id/reocr', (ctx) => api.reocrReceipt(ctx.params.id));
 route('DELETE', '/api/receipts/:id', (ctx) => api.deleteReceipt(ctx.params.id));
 
+/* 发票邮件发送：把项目里的 PDF 发票逐张作为附件发到指定邮箱 */
+route('GET', '/api/mail/status', () => api.mailStatus());
+route('POST', '/api/mail/test', async (ctx) => api.sendTestMail(await ctx.json().catch(() => ({}))));
+route('POST', '/api/projects/:id/send-invoices', async (ctx) =>
+  api.sendProjectInvoices(ctx.params.id, await ctx.json().catch(() => ({}))));
+
 /* AI 视觉提取队列：规则引擎解不出的票据入队，等 AI 助手看图补录 */
 route('GET', '/api/ai/queue', () => api.listAiQueue());
 route('POST', '/api/ai/receipts/:id/fields', async (ctx) => api.applyAiFields(ctx.params.id, await ctx.json()));

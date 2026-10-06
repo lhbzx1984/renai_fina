@@ -298,6 +298,16 @@ async function cleanStale() {
   check('非差旅项目无行程', r.json.data.trips.length === 0, r.json.data.trips);
   check('非差旅项目成员天数为0', r.json.data.members[0].days === 0, r.json.data.members[0]);
 
+  /* 10.5 发票邮件发送（不真发信：只验配置自检与未配置时的明确报错） */
+  console.log('\n[10.5] 发票邮件发送');
+  r = await req('GET', '/api/mail/status');
+  check('邮件状态接口返回结构', r.json.ok && 'configured' in r.json.data && Array.isArray(r.json.data.missing), r.json.data);
+  check('配置里不含授权码字段明文', r.json.data.passSet !== undefined && r.json.data.mail_smtp_pass === undefined);
+  const mailCfg = (await req('GET', '/api/settings')).json.data.settings;
+  check('设置接口不下发授权码', mailCfg.mail_smtp_pass === '');
+  r = await req('POST', `/api/projects/${pid2}/send-invoices`, {});
+  check('未配置时发送报出缺失项', r.json.ok === false && /缺：/.test(r.json.error || ''), r.json.error);
+
   /* 11. 仪表盘 */
   console.log('\n[11] 仪表盘统计');
   r = await req('GET', '/api/dashboard');
