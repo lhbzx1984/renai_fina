@@ -8,6 +8,7 @@
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { extractPdfText, extractPdfInvoiceMeta } = require('./pdftext');
+const { runImageOcr } = require('./imgocr');
 
 const MIME_BY_EXT = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
@@ -134,6 +135,12 @@ function guessCategory(fields, hint = '') {
   return 'other';
 }
 
+/** 关键字段命中数：判断是否值得动用（较慢的）图像 OCR */
+const KEY_FIELDS = ['amount', 'invoice_no', 'invoice_date'];
+function hitKeyFields(f) {
+  return KEY_FIELDS.filter((k) => f[k] != null && f[k] !== '').length;
+}
+
 /**
  * 默认引擎：PDF 文本层直读（零依赖）+ 文件名启发式兜底。
  * PDF 有文本层（如 12306 铁路电子客票、增值税电子发票）时直接解析出真实字段；
@@ -179,6 +186,28 @@ async function runOcr(buffer, mime, fileName, hint = '') {
     }
   }
 
+  // 3) 图像 OCR 兜底：扫描件 PDF / 拍照图片没有文本层，转成图再识别，仍走同一套字段规则
+  let imageNote = null;
+  const needImage = hitKeyFields(fields) < 2;
+  if (needImage) {
+    if (!process.env.OCR_CMD) {
+      imageNote = { reason: 'no-engine', hint: '未配置 OCR_CMD（如 tesseract），扫描件/图片无法自动识别，请人工录入' };
+    } else {
+      const im = await runImageOcr(buffer, fileName, {});
+      if (im.ok) {
+        const f2 = extractFields(im.text);
+        for (const k of Object.keys(f2)) if (fields[k] == null) fields[k] = f2[k];
+        if (Object.keys(f2).length) {
+          engine = isPdf ? 'pdf-image-ocr' : 'image-ocr';
+          confidence = 0.7;
+        }
+        imageNote = { via: im.via, pages: im.pages, chars: im.text.length };
+      } else {
+        imageNote = { reason: im.reason, hint: im.hint };
+      }
+    }
+  }
+
   // 2) 文件名启发式兜底（仅补 PDF 未解出的字段）
   if (fields.amount == null) {
     // 必须带明确货币标识：1743.00元 / ¥88 / 50块，纯数字串不再当金额（修复天文数字 bug）
@@ -216,8 +245,13 @@ async function runOcr(buffer, mime, fileName, hint = '') {
     raw: {
       note: engine === 'pdf-text'
         ? '已从 PDF 文本层解析字段，请人工核对。'
-        : '未接真实 OCR 服务（图片类）。已按文件名生成待审核草稿。',
+        : engine === 'pdf-meta'
+          ? '已从 PDF 元数据解析字段，请人工核对。'
+          : /image-ocr/.test(engine)
+            ? '扫描件/图片已通过图像 OCR 识别，请人工核对。'
+            : '文本层与图像 OCR 均未取到字段，已按文件名生成待审核草稿，请人工补录。',
       pdf: pdfNote,
+      imageOcr: imageNote,
       fileName,
       mime,
       bytes: buffer.length,

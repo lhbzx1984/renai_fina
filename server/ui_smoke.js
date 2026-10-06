@@ -355,6 +355,26 @@ async function run(){
     await wait(500);
     need(document.querySelector('#view-guide').classList.contains('active'), '顶栏「使用引导」按钮可打开引导页');
 
+    L('== 9.5 非差旅项目（无行程）报表步骤 ==');
+    const r95 = await (await fetch('/api/projects', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'UI烟测-无差旅', category: 'equipment', has_travel: false }),
+    })).json();
+    const npid = r95.data && r95.data.id;
+    need(!!npid, '非差旅测试项目已创建 id=' + npid);
+    await App.loadProjects();
+    await wait(300);
+    await App.openProject(npid);
+    await wait(900);
+    document.querySelector('[data-step="report"]').click();
+    await wait(1000);
+    const box95 = document.querySelector('#stepBox');
+    need(!!box95 && box95.textContent.length > 50, '报表步骤已渲染（字符数=' + (box95 ? box95.textContent.length : 0) + '）');
+    need(!!document.querySelector('.fund-preview'), '非差旅项目渲染资金申请单预览');
+    need(!document.querySelector('.report-paper'), '非差旅项目不渲染差旅表');
+    need(/非差旅项目仅生成资金申请单/.test(flat(box95.textContent)), '导出区按非差旅口径提示');
+    window.__npid = npid;
+
     L('== 10. XSS 转义检查 ==');
     App.switchView('projects');
     await wait(400);
@@ -374,6 +394,13 @@ async function run(){
     await wait(900);
     const projAfter = App.state.projects.find(p=>p.id===pid);
     need(!projAfter, '烟测项目已清理');
+    if (window.__npid) {
+      await App.deleteProject(window.__npid);
+      await wait(600);
+      document.querySelector('#modalBox .modal-foot .btn:last-child').click();
+      await wait(900);
+      need(!App.state.projects.find(p=>p.id===window.__npid), '非差旅烟测项目已清理');
+    }
     const left = App.state.projects.filter(p=>/^(UI烟测|冒烟测试|测试)/.test(p.name||''));
     need(left.length === 0, '系统内无测试项目残留，实际 ' + left.map(p=>p.name).join(','));
   }catch(e){

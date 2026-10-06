@@ -1302,12 +1302,12 @@ const App = {
         ${otherCells(r)}
       </tr>`).join('') : `<tr><td colspan="11">${emptyState('▦', '暂无费用明细', '请先添加成员并审核票据')}</td></tr>`;
 
-    const t = d.trips[0];
-    // 多段行程：出差时间取最早出发 ~ 最晚返回
+    const t = (d.trips || [])[0] || null;
+    // 多段行程：出差时间取最早出发 ~ 最晚返回；无行程（非差旅项目）时留空，不阻塞报表
     const ts = (d.trips || []).filter((x) => x.start_date);
-    const rs = ts.length ? ts.map((x) => x.start_date).sort()[0] : t.start_date;
-    const re = ts.length ? ts.map((x) => x.end_date || x.start_date).sort().pop() : t.end_date;
-    const rDays = rs && re ? Math.max(1, Math.floor((new Date(re) - new Date(rs)) / 86400000) + 1) : t.days;
+    const rs = ts.length ? ts.map((x) => x.start_date).sort()[0] : ((t && t.start_date) || '');
+    const re = ts.length ? ts.map((x) => x.end_date || x.start_date).sort().pop() : ((t && t.end_date) || '');
+    const rDays = rs && re ? Math.max(1, Math.floor((new Date(re) - new Date(rs)) / 86400000) + 1) : ((t && t.days) || '');
     $('#stepBox').innerHTML = `
       ${hasTravel && t ? `
       <div class="card">

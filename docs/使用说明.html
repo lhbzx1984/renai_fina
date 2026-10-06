@@ -236,6 +236,16 @@ figcaption{font-size:12.5px;color:var(--muted);margin-top:6px;text-align:center}
     <li><b>人工审核</b>：识别结果一律是<b>待审核</b>，必须逐张核对字段（费用科目、金额、归属成员、发票号、日期、销方、行程），点 <b>✓ 审核通过</b> 才计入报销。错票可<b>驳回</b>（不计入）或<b>删除</b>；误通过可「撤销通过」。</li>
     <li><b>批量导入</b>：点「批量导入」→ 下载 CSV 模板 → 粘数据，支持 CSV / JSON 两种格式。</li>
   </ol>
+  <h4>识别能力：三级取字</h4>
+  <table>
+    <tr><th>级别</th><th>适用票据</th><th>说明</th></tr>
+    <tr><td>① PDF 文本层</td><td>数电发票、铁路电子客票等电子 PDF</td><td>零依赖直读，最快最准</td></tr>
+    <tr><td>② PDF 元数据</td><td>开票软件写入的结构化字段</td><td>自动兜底</td></tr>
+    <tr><td>③ 图像 OCR</td><td>扫描件 PDF、拍照图片（无文本层）</td><td>转图后送外部引擎，<b>需配置 <code>OCR_CMD</code></b></td></tr>
+  </table>
+  <p>识别结果无论来自哪一级，一律进「待审核」，<b>人工核对后点通过才计入金额</b>。识别不出来也没关系——在票据卡片上手工填字段，照样能审核通过、生成表单。</p>
+  <p><b>启用图像 OCR（可选）</b>：启动服务时设置环境变量即可，例如
+  <code>OCR_CMD="tesseract {in} stdout -l chi_sim+eng"</code>。<code>{in}</code> 会替换成图片临时路径，引擎把文本打到 stdout 即可（也支持 <code>{out}</code> 输出文件）。转图依赖本机 <code>python</code> + <code>pymupdf</code>；未配置 <code>OCR_CMD</code> 时扫描件按文件名生成草稿等人工补录，<b>不会报错、不会卡住上传</b>。</p>
   <p>CSV 模板表头：</p>
   <pre><code>票据类型,姓名,工号/学号,发票号,日期,金额,销方名称,纳税人识别号,行程,费用,备注
 住宿费,刘海斌,093024,12345678,2026-03-02,1743,北京如家酒店,91110000123456789A,,住宿3晚,
