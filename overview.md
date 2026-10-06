@@ -83,6 +83,18 @@ runOcr(buffer, mime, fileName, hint) -> { fields, category, engine, raw }
 作用是**先把「上传 → 识别 → 审核 → 归集 → 计算 → 导出」整条链路跑通**。
 接真实 OCR（百度/腾讯/TextIn）只需替换 `runOcr` 实现，其余逻辑零改动。
 
+实际落地的**四级取字**：
+
+| 级 | 手段 | 适用 | 依赖 |
+|---|---|---|---|
+| ① | PDF 文本层直读 `lib/pdftext.js` | 电子发票（最常见，最快最准） | 零依赖 |
+| ② | PDF 元数据 | 部分开票工具 | 零依赖 |
+| ③ | 图像 OCR `lib/imgocr.js` | 扫描件 / 拍照票 | `OCR_CMD` 环境变量（可插拔，未配则跳过） |
+| ④ | **AI 看图补录** | 上述都不行的顽固票 | 多模态直读，零付费 API |
+
+④ 的工作方式：关键字段命中不足的票据自动入队（`receipts.ai_status='queued'`），
+由 AI 助手渲染预览图后读票面回填，并**写前查重**（同发票号已在库则告警不覆盖）。
+
 > 底线设计：**任何引擎的输出一律先落 `pending`**，机器只负责"读"，"信"必须由人。
 > 这是财务系统与普通 OCR 应用的本质区别。
 
@@ -126,10 +138,13 @@ docx/xlsx 是给财务用的，格式错一位就废一张单子。
 ## 六、测试结果
 
 ```
-npm test              → PASS 56 / FAIL 0   （12 组 API 端到端）
-npm run test:ui       → ALL PASS           （11 组无头 Chrome 真实点击，JS 错误：无）
-npm run verify:export → PASS 40 / FAIL 0   （python-docx / openpyxl 独立解析交叉校验）
+npm test              → PASS 77 / FAIL 0   （含 AI 补录队列 10 项断言）
+npm run test:ui       → ALL PASS           （无头 Chrome 真实点击，JS 错误：无）
+npm run verify:export → PASS 41 / FAIL 0   （python-docx / openpyxl 独立解析交叉校验）
 ```
+
+真实票据实测：15 张历史票据（火车票 + 数电普票 + 住宿发票）全部 3/3 关键字段命中，
+无需进入 AI 补录队列。
 
 导出校验关键输出：
 
@@ -160,8 +175,8 @@ XSS 防护已验证：注入 `<img src=x onerror=alert(1)>` 未被执行。
 
 ## 八、后续建议
 
-1. **接真实 OCR 服务**——改 `lib/ocr.js` 的 `runOcr` 即可，其余不用动
-2. **加登录鉴权**——当前单机无鉴权，内网可接受，公网需自行补一层
+1. **接本地/云端 OCR 引擎**（可选）——配 `OCR_CMD` 环境变量即可启用第 ③ 级，不改业务代码
+2. **加登录鉴权**——当前单机无鉴权，内网可接受，公网需自行补一层（`AUTH_USER` / `AUTH_PASS`）
 3. **审批流**——目前到「导出」为止，若需要「提交 → 院系审批 → 财务审核」可加 `status` 状态机
-4. **票据查重**——同一发票号重复上传可加唯一约束
+4. ~~票据查重~~ ✅ 已在 AI 补录回填时实现（同发票号命中即告警，不自动删数据）
 5. **Excel 直读**——批量导入目前走 CSV，可加 xlsx 解析直接吃 Excel
