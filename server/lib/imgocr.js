@@ -61,6 +61,47 @@ function cleanup(files) {
   for (const f of files || []) { try { fs.unlinkSync(f); } catch (e) { /* 忽略 */ } }
 }
 
+const PY_PREVIEW = `
+import sys, pymupdf
+doc = pymupdf.open(sys.argv[1])
+w = int(sys.argv[2]); q = int(sys.argv[3]); maxp = int(sys.argv[4])
+for i, page in enumerate(doc):
+    if i >= maxp: break
+    zoom = w / max(page.rect.width, 1)
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+    with open("%s.%d.jpg" % (sys.argv[5], i), "wb") as f:
+        f.write(pix.tobytes("jpeg", jpg_quality=q))
+print(min(len(doc), maxp))
+`;
+
+/**
+ * 渲染预览图：给 AI 助手「看图」用（原 PDF 动辄几 MB，直接读超限）。
+ * @returns {Promise<{ok:boolean, files:string[], reason?:string}>}
+ */
+async function previewImages(file, opts = {}) {
+  const py = findPython();
+  if (!py) return { ok: false, reason: 'no-pymupdf' };
+  if (!file || !fs.existsSync(file)) return { ok: false, reason: 'file-missing' };
+  const width = Number(opts.width || 1100);
+  const quality = Number(opts.quality || 60);
+  const maxPages = Number(opts.maxPages || 2);
+  const tag = `preview-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const out = path.join(tmpDir(), tag);
+  try {
+    const r = execFileSync(py, ['-c', PY_PREVIEW, file, String(width), String(quality), String(maxPages), out],
+      { encoding: 'utf8', timeout: 60000, windowsHide: true });
+    const n = parseInt(String(r).trim(), 10) || 0;
+    const files = [];
+    for (let i = 0; i < n; i++) {
+      const f = `${out}.${i}.jpg`;
+      if (fs.existsSync(f)) files.push(f);
+    }
+    return files.length ? { ok: true, files } : { ok: false, reason: 'no-image' };
+  } catch (e) {
+    return { ok: false, reason: 'render-failed', hint: String(e.message || e).slice(0, 200) };
+  }
+}
+
 const PY_EXTRACT = `
 import sys, base64, pymupdf
 doc = pymupdf.open(sys.argv[1])
@@ -194,4 +235,4 @@ function engineStatus() {
   };
 }
 
-module.exports = { runImageOcr, ticketImages, engineStatus, findPython };
+module.exports = { runImageOcr, ticketImages, previewImages, engineStatus, findPython };

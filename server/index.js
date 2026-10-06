@@ -176,6 +176,15 @@ route('POST', '/api/receipts/:id/review', async (ctx) => api.reviewReceipt(ctx.p
 route('POST', '/api/receipts/:id/reocr', (ctx) => api.reocrReceipt(ctx.params.id));
 route('DELETE', '/api/receipts/:id', (ctx) => api.deleteReceipt(ctx.params.id));
 
+/* AI 视觉提取队列：规则引擎解不出的票据入队，等 AI 助手看图补录 */
+route('GET', '/api/ai/queue', () => api.listAiQueue());
+route('POST', '/api/ai/receipts/:id/fields', async (ctx) => api.applyAiFields(ctx.params.id, await ctx.json()));
+route('POST', '/api/ai/receipts/:id/skip', async (ctx) => {
+  let body = {};
+  try { body = await ctx.json(); } catch (e) { /* 无请求体 */ }
+  return api.skipAiReceipt(ctx.params.id, body);
+});
+
 route('GET', '/api/projects/:id/preview/travel', (ctx) => api.buildTravelPayload(ctx.params.id));
 route('GET', '/api/projects/:id/export/travel_docx', (ctx) => ({ __file: api.exportTravelDocx(ctx.params.id) }));
 route('POST', '/api/projects/:id/export/fund_xlsx', async (ctx) => ({ __file: api.exportFundXlsx(ctx.params.id, await ctx.json().catch(() => ({}))) }));

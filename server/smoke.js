@@ -185,6 +185,34 @@ async function cleanStale() {
   r = await req('GET', `/api/projects/${pid}/receipts?status=pending`);
   check('待审核队列 2 条', r.json.data.receipts.length === 2, r.json.data.receipts.length);
 
+  /* 5b. AI 视觉提取队列（规则引擎没解出关键字段 -> 入队等 AI 看图） */
+  console.log('\n[5b] AI 视觉提取队列');
+  check('识别不足的票据自动入队', r.json.data.receipts.every((x) => x.ai_status === 'queued'),
+    r.json.data.receipts.map((x) => x.ai_status));
+  r = await req('GET', '/api/ai/queue');
+  check('GET 队列接口可用', r.json.ok && r.json.data.count >= 2, r.json.data.count);
+  check('队列含票据 id 与原文件路径', r.json.data.queue.some((x) => x.id === rid1 && !!x.abs_path),
+    r.json.data.queue[0]);
+  r = await req('POST', `/api/ai/receipts/${rid1}/fields`, {
+    fields: {
+      invoice_no: '24412000000012345678', invoice_date: '2026-08-14',
+      vendor: '合肥如家酒店有限公司', amount: 1743, category: '住宿费',
+    },
+  });
+  check('AI 回填字段成功', r.json.ok && !!r.json.data.updated.invoice_no, r.json.data);
+  check('已有值不被覆盖（只补空）', r.json.data.kept.amount === 1743, r.json.data.kept);
+  check('中文科目名归一到 key', r.json.data.fields.category === 'hotel', r.json.data.fields);
+  r = await req('GET', '/api/ai/queue');
+  check('回填后移出队列', !r.json.data.queue.some((x) => x.id === rid1), r.json.data.count);
+  r = await req('POST', `/api/ai/receipts/${rid2}/fields`,
+    { fields: { invoice_no: '24412000000012345678', amount: 109 } });
+  check('同发票号触发查重提示', r.json.ok && r.json.data.duplicate && r.json.data.duplicate.length === 1,
+    r.json.data.duplicate);
+  r = await req('POST', `/api/ai/receipts/${rid2}/skip`, { reason: '烟雾：非发票' });
+  check('skip 标记生效', r.json.ok, r.json);
+  r = await req('POST', `/api/ai/receipts/${rid1}/fields`, { fields: { amount: -5 } });
+  check('异常金额被拒绝写入', r.json.ok && r.json.data.fields.amount === 1743, r.json.data.fields);
+
   /* 6. 审核 */
   console.log('\n[6] 人工审核与归集');
   r = await req('POST', `/api/receipts/${rid1}/review`, {

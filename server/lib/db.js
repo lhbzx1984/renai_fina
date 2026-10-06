@@ -177,6 +177,9 @@ function ensureColumn(table, column, ddl) {
   } catch (e) { /* 已存在则忽略 */ }
 }
 ensureColumn('trips', 'member_ids', 'member_ids TEXT');
+/* AI 视觉提取队列：'' 无需处理 | queued 等待 AI 看图 | done 已回填 | skipped 人工放弃 */
+ensureColumn('receipts', 'ai_status', "ai_status TEXT NOT NULL DEFAULT ''");
+ensureColumn('receipts', 'ai_at', 'ai_at TEXT');
 
 /* ---------------- 工具 ---------------- */
 const DEFAULT_SETTINGS = {

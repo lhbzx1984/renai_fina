@@ -1080,6 +1080,8 @@ const App = {
     const stTag = st === 'approved' ? '<span class="tag green">✓ 已通过</span>'
       : st === 'rejected' ? '<span class="tag red">✕ 已驳回</span>'
         : '<span class="tag gold">⏳ 待审核</span>';
+    // 规则引擎没解出关键字段 -> 已入队，等 AI 助手看图补录
+    const aiTag = r.ai_status === 'queued' ? '<span class="tag purple">👁 AI 待提取</span>' : '';
     const isImg = r.mime && r.mime.startsWith('image/');
     const thumb = isImg
       ? `<img class="thumb" src="/api/files/${encodeURIComponent(r.file_path)}" alt="" onclick="lightbox('/api/files/${encodeURIComponent(r.file_path)}')">`
@@ -1098,10 +1100,12 @@ const App = {
         </div>
         <div style="text-align:right">
           <div style="font-size:17px;font-weight:700;color:${st === 'approved' ? 'var(--ok)' : 'var(--ink-3)'}">${r.amount != null ? '¥ ' + money(r.amount) : '未识别'}</div>
-          <div style="margin-top:3px">${stTag}</div>
+          <div style="margin-top:3px">${stTag} ${aiTag}</div>
         </div>
       </div>
-      ${st === 'pending' ? '<div class="ocr-hint" style="margin-bottom:9px"><span>ⓘ</span><span>OCR 自动识别结果已填入下方，请人工核对后点击「审核通过」或「驳回」。</span></div>' : ''}
+      ${r.ai_status === 'queued'
+    ? '<div class="ocr-hint" style="margin-bottom:9px"><span>ⓘ</span><span>这张票自动识别没取到关键字段，已加入<b>AI 待提取队列</b>。可在对话里说「处理发票队列」，让 AI 助手直接看图补录；也可以自己手工填下面的字段后审核通过。</span></div>'
+    : st === 'pending' ? '<div class="ocr-hint" style="margin-bottom:9px"><span>ⓘ</span><span>OCR 自动识别结果已填入下方，请人工核对后点击「审核通过」或「驳回」。</span></div>' : ''}
       <div class="rc-fields">
         <div class="rc-field"><label>费用科目</label>
           <select class="select" data-f="category">${this.state.buckets.map((b) =>
@@ -1535,6 +1539,31 @@ const App = {
       return;
     }
     let html = '';
+    // AI 待提取队列：规则引擎没解出关键字段、等 AI 看图补录的票据
+    let aiq = { count: 0, queue: [] };
+    try { aiq = await Api.get('/api/ai/queue'); } catch (e) { /* 队列接口异常不影响主流程 */ }
+    if (aiq.count) {
+      html += `<div class="card">
+        <div class="card-head">
+          <h3>👁 AI 待提取 ${aiq.count} 张</h3>
+          <span class="spacer"></span>
+          <span class="tag purple">自动识别未取到关键字段</span>
+        </div>
+        <div class="card-body tight">
+          <div class="table-wrap"><table class="tb">
+            <thead><tr><th>项目</th><th>票据</th><th>已有字段</th></tr></thead>
+            <tbody>${aiq.queue.map((x) => `<tr>
+              <td>${esc(x.project_code || '')} ${esc(x.project_name || '')}</td>
+              <td>${esc(x.file_name || '—')}</td>
+              <td style="font-size:11.5px;color:var(--ink-3)">${esc(JSON.stringify(x.current))}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+          <div class="hint" style="margin-top:8px">
+            想让我（AI 助手）处理：在对话里说 <b>「处理发票队列」</b>，我会逐张打开原图 / 原 PDF 读票、提取字段并回填。
+            也可以自己在项目里手工填字段 —— 手工填的票一样能审核通过、生成表单。回填后仍需你逐张点「通过」。
+          </div>
+        </div></div>`;
+    }
     for (const p of projects) {
       const r = await Api.get(`/api/projects/${p.id}/receipts`);
       if (!r.receipts.length) continue;
@@ -1555,8 +1584,9 @@ const App = {
         const m = p.members ? null : null;
         const stTag = x.ocr_status === 'approved' ? '<span class="tag green">已通过</span>'
           : x.ocr_status === 'rejected' ? '<span class="tag red">已驳回</span>' : '<span class="tag gold">待审核</span>';
+        const aiTag2 = x.ai_status === 'queued' ? ' <span class="tag purple">AI 待提取</span>' : '';
         return `<tr>
-                <td>${stTag}</td>
+                <td>${stTag}${aiTag2}</td>
                 <td>${esc(x.file_name || x.invoice_no || '手工录入')}</td>
                 <td>${esc(bucketLabel(x.category))}</td>
                 <td class="num">${x.amount != null ? '¥ ' + money(x.amount) : '—'}</td>

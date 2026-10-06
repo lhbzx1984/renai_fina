@@ -451,15 +451,16 @@ async function uploadReceipts(projectId, files, hints) {
       ocrResult = { engine: 'error', fields: {}, category: 'other', raw: { error: String(e.message) } };
     }
     const fl = ocrResult.fields || {};
+    const queued = aiNeeded(fl) ? 'queued' : '';
     const r = db.prepare(`INSERT INTO receipts
-      (project_id,category,file_name,file_path,mime,size,invoice_no,invoice_date,vendor,amount,tax_no,itinerary,ocr_raw,ocr_engine,ocr_status)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')`)
+      (project_id,category,file_name,file_path,mime,size,invoice_no,invoice_date,vendor,amount,tax_no,itinerary,ocr_raw,ocr_engine,ocr_status,ai_status)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)`)
       .run(projectId, ocrResult.category || 'other', f.filename || 'receipt', safe,
         f.mimetype || ocr.mimeOf(f.filename || ''), buf.length,
         fl.invoice_no || null, fl.invoice_date || null, fl.vendor || null,
         fl.amount != null ? fl.amount : null, fl.tax_no || null, fl.itinerary || null,
-        JSON.stringify(ocrResult.raw || {}), ocrResult.engine || 'offline-draft');
-    created.push({ id: r.lastInsertRowid, file_name: f.filename, fields: fl, engine: ocrResult.engine });
+        JSON.stringify(ocrResult.raw || {}), ocrResult.engine || 'offline-draft', queued);
+    created.push({ id: r.lastInsertRowid, file_name: f.filename, fields: fl, engine: ocrResult.engine, ai_status: queued });
   }
   return good({ created, message: `已上传 ${created.length} 张票据，等待人工审核` });
 }
@@ -493,12 +494,156 @@ async function reocrReceipt(id) {
   }
   const fl = ocrResult.fields || {};
   db.prepare(`UPDATE receipts SET category=COALESCE(?,category),invoice_no=?,invoice_date=?,vendor=?,
-    amount=?,tax_no=?,itinerary=?,ocr_raw=?,ocr_engine=?,updated_at=datetime('now','localtime') WHERE id=?`)
+    amount=?,tax_no=?,itinerary=?,ocr_raw=?,ocr_engine=?,ai_status=?,updated_at=datetime('now','localtime') WHERE id=?`)
     .run(ocrResult.category || null,
       fl.invoice_no || null, fl.invoice_date || null, fl.vendor || null,
       fl.amount != null ? fl.amount : null, fl.tax_no || null, fl.itinerary || null,
-      JSON.stringify(ocrResult.raw || {}), ocrResult.engine || 'offline-draft', id);
-  return good({ id, fields: fl, engine: ocrResult.engine });
+      JSON.stringify(ocrResult.raw || {}), ocrResult.engine || 'offline-draft',
+      aiNeeded(fl) ? 'queued' : '', id);
+  return good({ id, fields: fl, engine: ocrResult.engine, ai_status: aiNeeded(fl) ? 'queued' : '' });
+}
+
+/* ============ AI 视觉提取队列 ============
+ * 规则引擎解不出关键字段时，票据自动入队，等 AI 助手「看图」补录：
+ *   GET  /api/ai/queue                -> 待处理清单（含原文件绝对路径）
+ *   POST /api/ai/receipts/:id/fields  -> 回填 AI 提取的字段（只补空值，除非 force）
+ * 纪律同 invoice-organizer：不调任何付费 OCR；结果仍为待审核，人工通过才计入金额。
+ */
+const AI_VALUE_FIELDS = ['invoice_no', 'invoice_date', 'vendor', 'amount', 'tax_amount', 'tax_no', 'itinerary'];
+
+/** 关键字段命中 < 2 -> 需要补录 */
+function aiNeeded(fields) {
+  const f = fields || {};
+  return ['amount', 'invoice_no', 'invoice_date']
+    .filter((k) => f[k] != null && f[k] !== '').length < 2;
+}
+
+function receiptAbsPath(r) {
+  if (!r.file_path) return null;
+  return path.join(UPLOAD_DIR, path.basename(r.file_path));
+}
+
+/** AI 给的科目可能是中文名（住宿费）也可能是 key（hotel），统一归一到 key */
+function normalizeBucket(v, ctx) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  if (bucketKeySet().has(s)) return s;
+  const hit = allBuckets().find((b) => b.label === s || b.key === s);
+  if (hit) return hit.key;
+  // 中文名对不上字典：按销方/行程关键词猜
+  return ocr.guessCategory({ vendor: ctx.vendor || '', itinerary: ctx.itinerary || '' },
+    `${ctx.vendor || ''} ${ctx.itinerary || ''} ${s}`);
+}
+
+function listAiQueue() {
+  const rows = db.prepare(`SELECT r.*, p.name AS project_name, p.code AS project_code
+    FROM receipts r LEFT JOIN projects p ON p.id = r.project_id
+    WHERE r.ai_status = 'queued' ORDER BY r.id`).all();
+  const queue = rows.map((r) => {
+    const abs = receiptAbsPath(r);
+    return {
+      id: r.id,
+      project_id: r.project_id,
+      project_code: r.project_code,
+      project_name: r.project_name,
+      file_name: r.file_name,
+      mime: r.mime,
+      abs_path: abs,
+      exists: !!(abs && fs.existsSync(abs)),
+      current: {
+        invoice_no: r.invoice_no, invoice_date: r.invoice_date, vendor: r.vendor,
+        amount: r.amount, tax_no: r.tax_no, itinerary: r.itinerary, category: r.category,
+      },
+      ocr_engine: r.ocr_engine,
+      ocr_status: r.ocr_status,
+    };
+  });
+  return good({ count: queue.length, queue });
+}
+
+function applyAiFields(id, body) {
+  const r = db.prepare('SELECT * FROM receipts WHERE id=?').get(id);
+  if (!r) return bad('票据不存在');
+  const src = (body && body.fields) || body || {};
+  const force = !!(body && body.force);
+  const updated = {};
+  const kept = {};
+
+  for (const k of AI_VALUE_FIELDS) {
+    if (src[k] === undefined || src[k] === null || src[k] === '') continue;
+    const cur = r[k];
+    const empty = cur == null || cur === '';
+    if (!empty && !force) { kept[k] = cur; continue; }
+    let val = src[k];
+    if (k === 'amount' || k === 'tax_amount') {
+      const n = Number(String(val).replace(/[¥￥,，\s元]/g, ''));
+      if (!Number.isFinite(n) || n < 0 || n >= 1e7) continue; // 异常金额不写入
+      val = Math.round(n * 100) / 100;
+    } else {
+      val = String(val).trim().slice(0, 120);
+      if (!val) continue;
+    }
+    updated[k] = { from: empty ? null : cur, to: val };
+    r[k] = val;
+  }
+
+  // 科目归一（AI 常给中文名）
+  let cat = null;
+  if (src.category != null && src.category !== '') {
+    cat = normalizeBucket(src.category, r);
+    if (cat && (force || !r.category || r.category === 'other')) {
+      updated.category = { from: r.category, to: cat };
+      r.category = cat;
+    } else if (cat) { kept.category = r.category; }
+  }
+
+  // 查重：同发票号已存在（硬提示，不自动删数据）
+  let duplicate = null;
+  const no = r.invoice_no ? String(r.invoice_no).trim() : '';
+  if (no) {
+    const others = db.prepare('SELECT id,project_id,file_name,amount,invoice_date FROM receipts WHERE invoice_no=? AND id<>?')
+      .all(no, id);
+    if (others.length) {
+      duplicate = others.map((o) => ({ id: o.id, project_id: o.project_id, file_name: o.file_name, amount: o.amount, invoice_date: o.invoice_date }));
+    }
+  }
+
+  let raw = {};
+  try { raw = JSON.parse(r.ocr_raw || '{}'); } catch (e) { raw = {}; }
+  raw.ai = {
+    filledAt: new Date().toISOString(),
+    by: (body && body.reviewer) || 'AI 视觉提取',
+    updated: Object.keys(updated),
+    duplicate: duplicate || null,
+  };
+
+  db.prepare(`UPDATE receipts SET invoice_no=?,invoice_date=?,vendor=?,amount=?,tax_amount=?,tax_no=?,itinerary=?,
+    category=?,ocr_raw=?,ai_status='done',ai_at=datetime('now','localtime'),
+    updated_at=datetime('now','localtime')
+    WHERE id=?`)
+    .run(r.invoice_no, r.invoice_date, r.vendor, r.amount, r.tax_amount ?? null, r.tax_no, r.itinerary,
+      r.category, JSON.stringify(raw), id);
+
+  return good({
+    id, updated, kept, duplicate,
+    fields: {
+      invoice_no: r.invoice_no, invoice_date: r.invoice_date, vendor: r.vendor,
+      amount: r.amount, tax_amount: r.tax_amount ?? null, tax_no: r.tax_no,
+      itinerary: r.itinerary, category: r.category,
+    },
+    message: duplicate
+      ? `已回填 ${Object.keys(updated).length} 个字段，但发票号与已有票据重复（id ${duplicate.map((d) => d.id).join(',')}），请人工确认是否重复报销`
+      : `已回填 ${Object.keys(updated).length} 个字段，仍需人工审核通过`,
+  });
+}
+
+/** 放弃 AI 提取（AI 也看不清 / 非发票） */
+function skipAiReceipt(id, body) {
+  const r = db.prepare('SELECT id FROM receipts WHERE id=?').get(id);
+  if (!r) return bad('票据不存在');
+  db.prepare(`UPDATE receipts SET ai_status='skipped', ai_at=datetime('now','localtime'),
+    updated_at=datetime('now','localtime') WHERE id=?`).run(id);
+  return good({ id, message: '已标记为无需 AI 提取，请人工录入', reason: (body && body.reason) || '' });
 }
 
 function reviewReceipt(id, body) {
@@ -772,6 +917,7 @@ module.exports = {
   listReceipts, createReceipt, uploadReceipts, updateReceipt, reviewReceipt, deleteReceipt, reocrReceipt,
   importReceipts, receiptTemplate,
   exportTravelDocx, exportFundXlsx, buildTravelPayload, lastExport, mergeReceiptsPdf,
+  listAiQueue, applyAiFields, skipAiReceipt,
   addDictItem, deleteDictItem, allCategories, allBuckets,
   dashboard, CATEGORIES, BUCKETS,
 };
