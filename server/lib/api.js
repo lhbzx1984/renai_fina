@@ -310,7 +310,8 @@ function deleteProject(id) {
   for (const r of db.prepare('SELECT file_path FROM receipts WHERE project_id=?').all(id)) {
     if (!r.file_path) continue;
     const fp = path.join(UPLOAD_DIR, path.basename(r.file_path));
-    if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch (_) { /* 忽略 */ } }
+    try { if (fs.existsSync(fp)) fs.unlinkSync(fp); }
+    catch (e) { console.warn('[deleteProject] 删除票据文件失败 ' + fp + '：' + (e.code || '') + ' ' + e.message); }
   }
   db.prepare('DELETE FROM projects WHERE id=?').run(id);
   return good({ id });
