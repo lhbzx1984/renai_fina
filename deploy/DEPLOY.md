@@ -2,6 +2,10 @@
 
 面向**阿里云 ECS** 与**腾讯云 CVM**。Linux 用 `deploy.sh`，Windows Server 用 `deploy.ps1`。
 
+> **还没开机器？** 先看 [`SERVER.md`](SERVER.md) —— 服务器规格、磁盘容量推导、安全组规则、快照策略都在里面。
+>
+> **已经有数据想搬上来？** 看 [`MIGRATE.md`](MIGRATE.md) —— 数据库 + 邮箱配置 + 票据原件 + 导出表单的一次性迁移。
+
 ---
 
 ## 一、部署前必读（三条硬性要求）
@@ -27,28 +31,49 @@
 
 ## 二、一键部署（Linux）
 
+### 先选部署形态
+
+> **前台与后台由同一个 Node 进程提供，部署一次两个都上线**：
+> `/` 是报销前台，`/admin` 是后台管理系统（用户管理 / 注册审批）。不需要部署两趟。
+
+| 形态 | 命令 | 适用场景 |
+|---|---|---|
+| **独立端口 + IP 直访** | `deploy.sh --port 18080` | 新开机器先用起来，无需域名与备案 |
+| 域名 + HTTPS | `deploy.sh --domain 你的域名` | 正式使用（需已备案域名） |
+
 ### 步骤
 
+**方式 A：本机一条命令**（推荐，自动完成打包/上传/远程部署）
+
 ```bash
-# 1. 把整个项目目录传到服务器（不含 data/ 与 exports/）
-scp -r 天津仁爱学院报销/ root@你的公网IP:/tmp/reimburse
+# Windows 用 Git Bash，macOS/Linux 用自带终端；在项目根目录执行
+bash deploy/onekey.sh --host 你的公网IP --port 18080
+```
 
-# 2. SSH 登录
+**方式 B：手动两步**
+
+```bash
+# 1. 本机打包上传（白名单，不会覆盖服务器上的数据）
+tar -czf reimburse.tar.gz server package.json deploy
+scp reimburse.tar.gz root@你的公网IP:/tmp/
+
+# 2. 登录服务器执行部署
 ssh root@你的公网IP
-
-# 3. 执行部署
-cd /tmp/reimburse
-sudo bash deploy/deploy.sh --domain reimburse.example.com
+mkdir -p /tmp/src && tar -xzf /tmp/reimburse.tar.gz -C /tmp/src
+cd /tmp/src && sudo bash deploy/deploy.sh --port 18080
 ```
 
 ### 参数
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
-| `--domain <域名或IP>` | 访问地址，**必填** | — |
+| `--domain <域名>` | 已备案域名；给了就默认走 80/443 + HTTPS | 不给则用 `_` 走 IP 直访 |
+| `--port <端口>` | Nginx 对外监听端口 | `18080`（给 `--domain` 时自动改 80） |
+| `--app-port <端口>` | Node 应用监听端口（只听 127.0.0.1） | `5180` |
+| `--data-dir <路径>` | 数据目录，建议指向数据盘 | `/var/lib/reimburse` |
 | `--auth-user <用户名>` | 访问认证用户名 | `admin` |
 | `--auth-pass <密码>` | 访问认证密码 | 自动生成 20 位强随机 |
-| `--no-https` | 只配 HTTP（内网/测试用） | 关 |
+| `--no-https` | 只配 HTTP（IP 直访时**自动**启用） | 关 |
 | `--skip-nginx` | 不配 Nginx（已有网关时） | 关 |
 | `--skip-firewall` | 不动防火墙 | 关 |
 
@@ -56,19 +81,21 @@ sudo bash deploy/deploy.sh --domain reimburse.example.com
 
 | 步骤 | 动作 |
 |---|---|
-| 1 | 系统识别（Ubuntu/CentOS/腾讯OS）、架构检测（x64/arm64） |
-| 2 | 检查 Node ≥ 22，不足则**自动装**；并实测 `node:sqlite` 能否加载 |
+| 1 | 系统识别、架构检测、**端口占用预检**、数据盘落位提醒 |
+| 2 | 检查 Node ≥ 22，不足则自动装（官方源失败自动回落 npmmirror 镜像）；实测 `node:sqlite` 能否加载 |
 | 3 | 建 `reimburse` 系统用户（nologin），数据目录权限 **700** |
 | 4 | 同步代码；**升级时先自动备份数据库** |
 | 5 | 生成 `/etc/reimburse/env`（权限 600），自动生成强随机密码 |
 | 6 | 注册 systemd 服务 + **安全加固**（只读系统、禁提权、系统调用白名单） |
-| 7 | Nginx 反代配置 + 配置校验 + 重载 |
-| 8 | 防火墙放行 80/443（**故意不放行 5180**） |
+| 7 | Nginx 反代配置 + SELinux 放行非标准端口（CentOS 系）+ 配置校验 + 重载 |
+| 8 | 防火墙放行对外端口（**故意不放行应用端口**） |
+| 9 | **部署后自检**：应用层探活 + 经 Nginx 验证 `/` 与 `/admin` |
 
 ### 部署后
 
 ```
-访问地址 : https://reimburse.example.com
+前台地址 : http://你的公网IP:18080/
+后台地址 : http://你的公网IP:18080/admin
 账号密码 : 部署时终端会打印，务必立即保存
 ```
 
@@ -132,8 +159,9 @@ NSSM 未安装时脚本会提示，并给出手动运行方式。
 
 | 项 | 怎么确认 | 期望 |
 |---|---|---|
-| 5180 未暴露公网 | `sudo netstat -tlnp \| grep 5180` | 只监听 `127.0.0.1` |
-| 80/443 已放行 | 云控制台安全组 | 入方向规则有 80、443 |
+| 应用端口未暴露公网 | `sudo ss -tlnp \| grep 5180` | 只监听 `127.0.0.1` |
+| 对外端口已放行 | 云控制台安全组 + `sudo ufw status` | 有 18080（或 80/443） |
+| 前后台都能打开 | `curl -I http://IP:18080/` 与 `/admin` | 200 或 401（401 说明 Basic Auth 生效） |
 | 22 端口限制来源 | 安全组 | **不要** 0.0.0.0/0，改为你自己的 IP |
 | 数据目录权限 | `ls -ld /var/lib/reimburse` | `drwx------` |
 | env 文件权限 | `ls -l /etc/reimburse/env` | `-rw-------` |

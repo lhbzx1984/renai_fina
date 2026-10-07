@@ -3,6 +3,10 @@ Description=Tianjin Renai College Reimbursement System
 Documentation=file:/opt/reimburse/deploy/DEPLOY.md
 After=network-online.target
 Wants=network-online.target
+# 重启限流必须写在 [Unit] 段。写进 [Service] 会被 systemd 忽略并告警，
+# 结果是崩溃后无限重启（本来是想给运维留出介入时间的）
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
@@ -14,13 +18,18 @@ WorkingDirectory=/opt/reimburse
 # 密码与密钥不要写在本 unit 里，统一放 /etc/reimburse/env（权限 600）
 EnvironmentFile=-/etc/reimburse/env
 
-# 只监听回环地址，公网流量必须经 Nginx，这样 5180 不会直接暴露
+# 只监听回环地址，公网流量必须经 Nginx，这样应用端口不会直接暴露
+# PORT 刻意不写在这里：由 /etc/reimburse/env 提供（deploy.sh 的 --app-port），
+# 避免 Environment= 与 EnvironmentFile= 同名键的覆盖顺序产生歧义。
 Environment=HOST=127.0.0.1
-Environment=PORT=5180
 Environment=NODE_ENV=production
 
-# node:sqlite 在 Node 22 是实验特性，必须带此标志
-ExecStart=/usr/bin/node --experimental-sqlite server/index.js
+# 注意：这行只是模板默认值，deploy.sh 会按实际 Node 版本**实测**后整行重写。
+# --experimental-sqlite 在 Node 22.5~22.x 必需，23.4 转正，24.x 的后期小版本已移除，
+# 继续传会 "bad option" 直接退出。绝不能靠版本号硬判，必须问 Node 自己。
+# 默认不带实验标志：现代 Node（≥22.13 / 全部 23、24）裸跑即可加载 node:sqlite，
+# 带标志反而在 24 的后期小版本上 "bad option" 崩溃。deploy.sh 会实测后整行重写。
+ExecStart=/usr/bin/node server/index.js
 
 # ---- 安全加固 ----
 # 禁止提权后执行新程序
@@ -50,9 +59,7 @@ SystemCallErrorNumber=EPERM
 # ---- 重启策略 ----
 Restart=always
 RestartSec=3
-# 反复崩溃时不要无限重启，给运维留出介入时间
-StartLimitBurst=5
-StartLimitIntervalSec=60
+# 限流阈值在 [Unit] 段，见上
 
 # 日志：journald 会收集 stdout/stderr
 StandardOutput=journal

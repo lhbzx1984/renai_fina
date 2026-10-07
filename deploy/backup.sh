@@ -5,9 +5,16 @@
 # 用法：
 #   sudo bash deploy/backup.sh              # 备份到默认目录
 #   sudo bash deploy/backup.sh --keep 30    # 只保留最近 30 份
+#   sudo bash deploy/backup.sh --with-exports   # 连导出件一起备份（默认不备）
 #   sudo bash deploy/backup.sh --restore /var/backups/reimburse/reimburse-20260101-030000.tar.gz
 #
-# 备份内容：数据库 + 上传的票据原件 + 导出件
+# 备份内容：数据库 + 上传的票据原件（导出件默认不备，见下）
+#
+# 为什么默认不备份导出件：
+#   exports/ 里的 docx/xlsx 都能从数据库随时重新生成，属于可再生数据。
+#   但它和票据原件一样按份计体积，默认保留 14 份时会被乘以 14。
+#   真正不可再生的只有两样：数据库、票据原件。把可再生数据排除在备份外，
+#   磁盘占用能显著下降，且不影响恢复能力。需要留档时再加 --with-exports。
 #
 # 为什么不能直接 cp 数据库文件：
 #   SQLite 在 WAL 模式下，写入中的数据可能只存在于 -wal 文件里，
@@ -21,6 +28,8 @@ DATA_DIR="${DATA_DIR:-/var/lib/reimburse}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/reimburse}"
 KEEP=14
 RESTORE_FROM=""
+# 导出件可再生，默认不进备份（见文件头说明）
+WITH_EXPORTS=0
 
 c_ok()   { printf '\033[32m  [OK]\033[0m   %s\n' "$*"; }
 c_warn() { printf '\033[33m  [WARN]\033[0m %s\n' "$*"; }
@@ -29,12 +38,13 @@ die()    { c_err "$*"; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --keep)    KEEP="$2"; shift 2 ;;
-    --restore) RESTORE_FROM="$2"; shift 2 ;;
+    --keep)          KEEP="$2"; shift 2 ;;
+    --restore)       RESTORE_FROM="$2"; shift 2 ;;
+    --with-exports)  WITH_EXPORTS=1; shift ;;
     -h|--help)
       cat <<'EOF'
 用法：
-  sudo bash deploy/backup.sh [--keep N]
+  sudo bash deploy/backup.sh [--keep N] [--with-exports]
   sudo bash deploy/backup.sh --restore <备份包路径>
 EOF
       exit 0 ;;
@@ -73,6 +83,13 @@ fi
 # ---------- 备份 ----------
 [[ $EUID -eq 0 ]] || die "请用 root 运行：sudo bash deploy/backup.sh"
 
+# 备份目录必须在数据目录之外。若放进去，每次备份都会把上一份备份打进去，
+# 体积逐日翻倍，几天就能撑爆磁盘——而且这种膨胀是静默发生的，很难事先发现。
+case "$BACKUP_ROOT" in
+  "$DATA_DIR"/*|"$DATA_DIR")
+    die "备份目录不能位于数据目录内（$BACKUP_ROOT ⊂ $DATA_DIR），会导致备份自我包含、体积指数膨胀" ;;
+esac
+
 DB_FILE="$DATA_DIR/reimburse.db"
 [[ -f "$DB_FILE" ]] || die "数据库不存在: $DB_FILE（服务是否已初始化？）"
 
@@ -83,6 +100,21 @@ trap 'rm -rf "$STAGE"' EXIT
 
 # ---- 1. 数据库一致性快照 ----
 DB_OUT="$STAGE/reimburse.db"
+
+# --experimental-sqlite 在 Node 22.5~22.x 必需，23.4 转正，24.x 的后期小版本
+# 又把它移除了（本机 v24.14 仍接受，服务器 v24.21 已报 bad option）。
+# 同一个大版本里前后不一致，所以绝不能按版本号猜，只能实测。
+SQLITE_FLAG=""
+# 判据必须是「不带标志跑不了、带了才行才加」，反过来（带标志能跑就加）会误判：
+# Node 22.22 裸跑就能加载 sqlite，按错误判据会多带上这个标志。
+if ! node -e "require('node:sqlite')" >/dev/null 2>&1 </dev/null; then
+  if node --experimental-sqlite -e "require('node:sqlite')" >/dev/null 2>&1 </dev/null; then
+    SQLITE_FLAG="--experimental-sqlite"
+  else
+    die "当前 Node.js ($(node -v)) 无法加载 node:sqlite（需 ≥ 22.5）"
+  fi
+fi
+
 if command -v sqlite3 >/dev/null 2>&1; then
   # .backup 走 SQLite 备份 API，保证事务一致
   sqlite3 "$DB_FILE" ".backup '${DB_OUT}'" \
@@ -90,12 +122,15 @@ if command -v sqlite3 >/dev/null 2>&1; then
 else
   c_warn "未安装 sqlite3，退回 VACUUM INTO（需 node 支持）"
   # 用 node 的 sqlite 做同样的一致性备份，避免直接 cp 拿到不一致状态
-  node --experimental-sqlite -e "
+  # 注意：这里必须不加引号地展开 ${SQLITE_FLAG}，且重定向 stdin。
+  # 若写成 "${SQLITE_FLAG}"，变量为空时 node 会收到一个空字符串参数，
+  # 从而忽略 -e 转而去读 stdin —— 在终端里表现为脚本永久卡住且无任何输出。
+  node ${SQLITE_FLAG} -e "
     const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(process.argv[1]);
     db.exec(\"VACUUM INTO '\${process.argv[2]}'\");
     db.close();
-  " "$DB_FILE" "$DB_OUT" 2>/dev/null \
+  " "$DB_FILE" "$DB_OUT" 2>/dev/null </dev/null \
     && c_ok "数据库快照完成（VACUUM INTO，事务一致）" \
     || die "数据库备份失败"
 fi
@@ -112,9 +147,14 @@ if command -v sqlite3 >/dev/null 2>&1; then
   c_ok "备份校验通过：$TBL_COUNT 张表，$ROW_COUNT 个项目"
 fi
 
-# ---- 2. 上传票据与导出件 ----
+# ---- 2. 上传票据（不可再生，必须备）与导出件（可再生，默认不备）----
 [[ -d "$DATA_DIR/uploads" ]] && cp -a "$DATA_DIR/uploads" "$STAGE/uploads" 2>/dev/null || true
-[[ -d "$DATA_DIR/exports" ]] && cp -a "$DATA_DIR/exports" "$STAGE/exports" 2>/dev/null || true
+if [[ "$WITH_EXPORTS" == "1" ]]; then
+  [[ -d "$DATA_DIR/exports" ]] && cp -a "$DATA_DIR/exports" "$STAGE/exports" 2>/dev/null || true
+else
+  c_warn "已跳过导出件 exports/（可再生）。如需留档请加 --with-exports"
+fi
+[[ -d "$STAGE/uploads" ]] || c_warn "数据目录中没有 uploads/，本次备份不含票据原件"
 
 # ---- 3. 打包 ----
 ARCHIVE="$BACKUP_ROOT/reimburse-${TS}.tar.gz"
