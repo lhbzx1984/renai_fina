@@ -9,8 +9,30 @@ function check(name, cond, extra) {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
   else { fail++; console.log(`  FAIL ${name}${extra ? ' -> ' + JSON.stringify(extra) : ''}`); }
 }
+/** 系统开启账号登录后，业务接口需要会话 Cookie。此处自动以超管身份登录，
+ *  让原有冒烟用例无需改动即可继续跑。密码取自 data/_admin_init.txt 或环境变量。 */
+let AUTH_COOKIE = null;
+async function loginAsAdmin() {
+  let pw = process.env.SUPER_ADMIN_PASS || '';
+  if (!pw) {
+    try {
+      const m = fs.readFileSync(path.join(__dirname, '..', 'data', '_admin_init.txt'), 'utf8').match(/密码：(\S+)/);
+      if (m) pw = m[1];
+    } catch (e) { /* 未启用登录或文件不存在 */ }
+  }
+  if (!pw) return false;
+  const r = await fetch(BASE + '/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account: process.env.SUPER_ADMIN_USER || 'admin', password: pw }),
+  });
+  const sc = r.headers.get('set-cookie') || '';
+  AUTH_COOKIE = (sc.match(/sid=([^;]+)/) || [])[1] || null;
+  return !!AUTH_COOKIE;
+}
+
 async function req(method, url, body, isForm, contentType) {
   const opt = { method, headers: {} };
+  if (AUTH_COOKIE) opt.headers.Cookie = 'sid=' + AUTH_COOKIE;
   if (isForm) {
     opt.headers['Content-Type'] = contentType || 'application/octet-stream';
     opt.body = body;
@@ -53,6 +75,9 @@ async function cleanStale() {
 
 (async () => {
   console.log('\n=== 天津仁爱学院报销系统 · 端到端冒烟测试 ===\n');
+  // 系统开启账号登录门登录后，先拿会话，否则后续所有业务接口都会 401
+  const logged = await loginAsAdmin();
+  console.log(logged ? '已自动登录（超管）\n' : '未启用账号登录或登录失败，将按匿名访问继续\n');
   await cleanStale(); // 先清掉上次可能残留的测试数据
 
   /* 1. 设置 */
@@ -305,8 +330,18 @@ async function cleanStale() {
   check('配置里不含授权码字段明文', r.json.data.passSet !== undefined && r.json.data.mail_smtp_pass === undefined);
   const mailCfg = (await req('GET', '/api/settings')).json.data.settings;
   check('设置接口不下发授权码', mailCfg.mail_smtp_pass === '');
+  // 该接口有两条失败分支，取决于系统里邮件是否已配置：
+  // 未配置 -> 报「缺：…」；已配置但项目无已审核 PDF -> 报「没有可发送的 PDF 发票」。
+  // 按当前配置状态断言对应分支，否则用例会随库里的 SMTP 配置漂移而误报。
+  const mailOk = (await req('GET', '/api/mail/status')).json.data.configured;
   r = await req('POST', `/api/projects/${pid2}/send-invoices`, {});
-  check('未配置时发送报出缺失项', r.json.ok === false && /缺：/.test(r.json.error || ''), r.json.error);
+  if (mailOk) {
+    check('已配置但无发票时报出明确原因',
+      r.json.ok === false && /没有可发送的 PDF 发票/.test(r.json.error || ''), r.json.error);
+  } else {
+    check('未配置时发送报出缺失项',
+      r.json.ok === false && /缺：/.test(r.json.error || ''), r.json.error);
+  }
 
   /* 11. 仪表盘 */
   console.log('\n[11] 仪表盘统计');

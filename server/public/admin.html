@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>后台管理 · 天津仁爱学院报销系统</title>
+<link rel="stylesheet" href="css/admin.css?v=20261007c">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙</text></svg>">
+</head>
+<body>
+
+<!-- ============ 登录 ============ -->
+<div class="login-wrap" id="loginWrap">
+  <div class="login-card">
+    <div class="mark">⚙</div>
+    <h1>后台管理系统</h1>
+    <div class="sub">ADMIN CONSOLE</div>
+    <div id="loginTip"></div>
+    <div class="field">
+      <label>管理员账号<span class="req">*</span></label>
+      <input class="input" id="lgAccount" placeholder="登录名 / 邮箱 / 手机号" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>密码<span class="req">*</span></label>
+      <input class="input" type="password" id="lgPass" placeholder="登录密码" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" id="btnLogin" style="width:100%;margin-top:6px">登 录</button>
+    <div style="text-align:center;margin-top:14px">
+      <a href="/" style="color:var(--ink-3);font-size:12.5px;text-decoration:none">← 返回报销系统</a>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 后台主体 ============ -->
+<div class="admin hidden" id="adminWrap">
+  <aside class="side">
+    <div class="brand">
+      <b><span>⚙</span>后台管理</b>
+      <small>TIANJIN RENAI UNIVERSITY</small>
+    </div>
+    <nav id="adminNav">
+      <div class="nav-item active" data-view="overview"><span>◈</span>概览</div>
+      <div class="nav-item" data-view="pending"><span>⏳</span>注册审批<span class="cnt zero" id="navPendingCnt">0</span></div>
+      <div class="nav-item" data-view="users"><span>☰</span>用户管理</div>
+      <div class="nav-item" data-view="settings"><span>⚙</span>认证与邮箱</div>
+      <div class="nav-item" data-view="audit"><span>≡</span>操作日志</div>
+    </nav>
+    <div class="foot">
+      <div id="sideUser">—</div>
+      <div style="margin-top:6px"><a href="/" id="linkHome">返回系统</a> · <a id="linkPwd">改密</a> · <a id="linkLogout">退出</a></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <h2 id="pgTitle">概览</h2>
+      <span class="spacer"></span>
+      <button class="btn btn-sm" id="btnRefreshTop">↻ 刷新</button>
+    </header>
+    <div class="content">
+
+      <!-- 概览 -->
+      <section class="view" id="view-overview">
+        <div class="grid grid-5" id="statCards"></div>
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-head"><h3>待处理注册申请</h3><span class="spacer"></span>
+              <button class="btn btn-sm" onclick="Admin.go('pending')">去审批</button></div>
+            <div class="card-body tight" id="pendingBrief"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>系统状态</h3></div>
+            <div class="card-body" id="sysBrief"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 注册审批 -->
+      <section class="view hidden" id="view-pending">
+        <div class="card">
+          <div class="card-head">
+            <h3>注册审批</h3><span class="spacer"></span>
+            <button class="btn btn-sm" id="btnApproveAll">全部通过</button>
+          </div>
+          <div class="card-body tight"><div class="table-wrap"><table class="tb" id="pendingTable"></table></div></div>
+        </div>
+      </section>
+
+      <!-- 用户管理 -->
+      <section class="view hidden" id="view-users">
+        <div class="card">
+          <div class="card-head">
+            <h3>用户管理</h3><span class="spacer"></span>
+            <input class="input" id="uSearch" placeholder="搜索登录名/姓名/邮箱/手机/工号" style="width:240px">
+            <select class="select" id="uStatus" style="width:120px">
+              <option value="">全部状态</option>
+              <option value="pending">待审批</option>
+              <option value="active">正常</option>
+              <option value="disabled">已停用</option>
+              <option value="rejected">已驳回</option>
+            </select>
+            <select class="select" id="uRole" style="width:120px">
+              <option value="">全部角色</option>
+              <option value="user">普通用户</option>
+              <option value="admin">管理员</option>
+              <option value="super_admin">超级管理员</option>
+            </select>
+            <button class="btn btn-primary btn-sm" id="btnNewUser">+ 新建账号</button>
+          </div>
+          <div class="card-body tight"><div class="table-wrap"><table class="tb" id="userTable"></table></div></div>
+        </div>
+      </section>
+
+      <!-- 认证与邮箱设置 -->
+      <section class="view hidden" id="view-settings">
+        <div class="card">
+          <div class="card-head"><h3>注册与审批</h3></div>
+          <div class="card-body">
+            <div class="grid grid-2">
+              <div class="field">
+                <label>开放注册</label>
+                <select class="select" id="s_register_open">
+                  <option value="1">开放（新用户可自助注册）</option>
+                  <option value="0">关闭（仅管理员可建号）</option>
+                </select>
+                <div class="hint">关闭后注册页提示联系管理员。</div>
+              </div>
+              <div class="field">
+                <label>主应用强制登录</label>
+                <select class="select" id="s_require_login">
+                  <option value="1">开启（必须登录才能用）</option>
+                  <option value="0">关闭（沿用旧行为，任何人可操作）</option>
+                </select>
+                <div class="hint">关闭后业务数据面无账号门禁，仅靠 Basic Auth 兜底。</div>
+              </div>
+              <div class="field">
+                <label>邮箱域名白名单</label>
+                <input class="input" id="s_whitelist" placeholder="tjrac.edu.cn,renai.cn">
+                <div class="hint">逗号分隔。命中白名单的邮箱注册后<strong>自动通过</strong>，不再进审批队列。</div>
+              </div>
+              <div class="field">
+                <label>验证码有效期（秒）</label>
+                <input class="input" type="number" id="s_code_ttl" min="60" max="1800">
+              </div>
+              <div class="field">
+                <label>重发冷却（秒）</label>
+                <input class="input" type="number" id="s_code_resend" min="10" max="600">
+              </div>
+              <div class="field">
+                <label>登录失败锁定阈值（次）</label>
+                <input class="input" type="number" id="s_fail_max" min="3" max="20">
+              </div>
+              <div class="field">
+                <label>会话有效时长（小时）</label>
+                <input class="input" type="number" id="s_session_hours" min="1" max="720">
+              </div>
+            </div>
+            <div style="margin-top:14px">
+              <button class="btn btn-primary" id="btnSaveAuth">保存设置</button>
+              <span class="hint" style="margin-left:10px">修改后需点击保存才会写入。</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>验证码邮箱</h3><span class="spacer"></span><span class="hint" id="mailState"></span></div>
+          <div class="card-body">
+            <div id="mailAlert"></div>
+            <div class="hint">
+              邮箱是本系统<strong>唯一</strong>的验证码渠道：注册与找回密码都靠它。
+              SMTP 与发件人在「系统设置 → 邮件」里配置；这里只做状态提示。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 操作日志 -->
+      <section class="view hidden" id="view-audit">
+        <div class="card">
+          <div class="card-head"><h3>操作日志</h3><span class="spacer"></span>
+            <select class="select" id="auditLimit" style="width:120px">
+              <option value="100">最近 100 条</option>
+              <option value="300">最近 300 条</option>
+              <option value="1000">最近 1000 条</option>
+            </select>
+          </div>
+          <div class="card-body tight" id="auditList"></div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<div class="mask" id="mask"><div class="modal" id="modal"></div></div>
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="js/admin.js?v=20261007c"></script>
+</body>
+</html>

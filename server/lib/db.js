@@ -156,6 +156,83 @@ CREATE TABLE IF NOT EXISTS receipt_items (
 CREATE INDEX IF NOT EXISTS idx_ritems_receipt ON receipt_items(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_ritems_member ON receipt_items(member_id);
 
+-- ========== 账号（注册 + 审批 + 登录） ==========
+-- 邮箱与手机号都允许为空（二选一注册），但同一账号至少有一个可登录凭据，
+-- 由业务层保证；这里只做唯一性约束，避免两人绑定同一个手机号。
+CREATE TABLE IF NOT EXISTS users (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  username         TEXT NOT NULL UNIQUE,    -- 登录名（用户自定义，不可重复）
+  name             TEXT NOT NULL,           -- 真实姓名
+  email            TEXT UNIQUE,
+  phone            TEXT UNIQUE,
+  job_no           TEXT,                    -- 工号 / 学号
+  college_id       INTEGER REFERENCES colleges(id) ON DELETE SET NULL,
+  major_id         INTEGER REFERENCES majors(id) ON DELETE SET NULL,
+  password_hash    TEXT NOT NULL,
+  password_salt    TEXT NOT NULL,
+  role             TEXT NOT NULL DEFAULT 'user',      -- super_admin 超管 | admin 管理员 | user 普通用户
+  status           TEXT NOT NULL DEFAULT 'pending',   -- pending 待审批 | active 正常 | disabled 停用 | rejected 已驳回
+  email_verified   INTEGER NOT NULL DEFAULT 0,
+  phone_verified   INTEGER NOT NULL DEFAULT 0,
+  register_channel TEXT,                    -- email | phone
+  register_reason  TEXT,                    -- 注册时填写的用途说明，供管理员审批参考
+  approved_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  approved_at      TEXT,
+  reject_reason    TEXT,
+  last_login_at    TEXT,
+  last_login_ip    TEXT,
+  login_fail_count INTEGER NOT NULL DEFAULT 0,
+  locked_until     TEXT,                    -- 登录失败过多时锁定到该时刻
+  created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+
+-- ========== 验证码 ==========
+-- 只存哈希：数据库泄露时不能反推出可用验证码。purpose 区分注册/登录/重置，
+-- 防止「注册时拿到的验证码」被拿去重置别人的密码。
+CREATE TABLE IF NOT EXISTS verify_codes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  target      TEXT NOT NULL,                -- 邮箱地址 / 手机号
+  channel     TEXT NOT NULL,                -- email | phone
+  purpose     TEXT NOT NULL,                -- register | login | reset | bind
+  code_hash   TEXT NOT NULL,
+  salt        TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  attempts    INTEGER NOT NULL DEFAULT 0,   -- 校验失败次数，超阈值作废
+  used_at     TEXT,
+  ip          TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_codes_target ON verify_codes(target, purpose);
+CREATE INDEX IF NOT EXISTS idx_codes_created ON verify_codes(created_at);
+
+-- ========== 会话 ==========
+CREATE TABLE IF NOT EXISTS sessions (
+  token       TEXT PRIMARY KEY,             -- 32 字节随机 hex
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  expires_at  TEXT NOT NULL,
+  ip          TEXT,
+  user_agent  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
+
+-- ========== 审计日志（管理员操作留痕） ==========
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_id   INTEGER,
+  actor_name TEXT,                          -- 冗余存姓名：用户被删后日志仍可读
+  action     TEXT NOT NULL,                 -- approve / reject / disable / role_change ...
+  target     TEXT,                          -- 被操作对象（用户 id 或标识）
+  detail     TEXT,
+  ip         TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
+
 -- ========== 导出记录 ==========
 CREATE TABLE IF NOT EXISTS exports (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,7 +275,20 @@ const DEFAULT_SETTINGS = {
   mail_smtp_secure: '1',    // 1=465 隐式 SSL；0=明文 25/587
   mail_smtp_user: '',       // SMTP 账号（一般与发件人相同）
   mail_smtp_pass: '',       // 授权码：仅存本地库，接口下发时自动脱敏
+
+  // ---- 账号与注册审批 ----
+  auth_register_open: '1',  // 1=开放注册（仍按白名单/审批分流）；0=关闭，仅管理员可建号
+  auth_require_login: '1',  // 1=主应用强制登录；0=沿用旧行为（仅 Basic Auth 兜底）
+  auth_domain_whitelist: '',// 邮箱域名白名单，逗号分隔，如 tjrac.edu.cn —— 命中即自动通过
+  auth_code_ttl: '300',     // 验证码有效期（秒）
+  auth_code_resend: '60',   // 同一目标重发冷却（秒）
+  auth_login_fail_max: '5', // 连续失败次数上限，超过则锁定
+  auth_lock_minutes: '15',  // 锁定时长（分钟）
+  auth_session_hours: '8',  // 会话有效时长（小时）
 };
+
+/** 密钥类设置项：接口一律不回传明文，只给「是否已配置」布尔值 */
+const SECRET_SETTINGS = ['mail_smtp_pass'];
 
 function getSetting(key) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -262,6 +352,7 @@ module.exports = {
   UPLOAD_DIR,
   EXPORT_DIR,
   DEFAULT_SETTINGS,
+  SECRET_SETTINGS,
   getSetting,
   setSetting,
   getAllSettings,

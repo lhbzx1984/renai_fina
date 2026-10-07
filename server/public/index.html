@@ -253,6 +253,9 @@
 
 <!-- 相对路径，理由同 CSS 引用 -->
 <script src="js/api.js"></script>
+<!-- 登录守卫必须在 app.js 之前：它靠「先注册的 DOMContentLoaded 监听器」抢在
+     App.init 之前把它顶掉，未登录时阻止应用初始化，登录后再还原执行。 -->
+<script src="js/auth-guard.js?v=20261007b"></script>
 <script src="js/app.js"></script>
 <script>
 // file:// 协议下无法调用后端 API（无同源服务器）。给出明确指引，

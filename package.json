@@ -5,12 +5,16 @@
   "description": "天津仁爱学院报销管理系统 - 零依赖 Demo（Node 内置 node:sqlite + 原生前端）",
   "main": "server/index.js",
   "scripts": {
-    "start": "node --experimental-sqlite server/index.js",
+    "start": "node server/index.js",
     "restart": "node server/restart.js restart",
     "stop": "node server/restart.js stop",
     "test": "node server/smoke.js",
+    "test:auth": "node server/auth_smoke.js",
     "test:ui": "node server/ui_smoke.js",
-    "verify:export": "python server/verify_exports.py"
+    "check:ids": "node server/idcheck.js",
+    "verify:export": "python server/verify_exports.py",
+    "migrate:export": "node deploy/migrate/export-bundle.js",
+    "migrate:verify": "node deploy/migrate/verify-bundle.js"
   },
   "engines": {
     "node": ">=22.5.0"

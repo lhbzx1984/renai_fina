@@ -2,7 +2,7 @@
 /** 业务 API 处理：全部返回 {ok, data} 或 {ok:false, error} */
 const fs = require('node:fs');
 const path = require('node:path');
-const { db, getSetting, getAllSettings, setSetting, DEFAULT_SETTINGS, UPLOAD_DIR, EXPORT_DIR } = require('./db');
+const { db, getSetting, getAllSettings, setSetting, DEFAULT_SETTINGS, SECRET_SETTINGS, UPLOAD_DIR, EXPORT_DIR } = require('./db');
 const { round2, rmbUpper } = require('./money');
 const { computeProject, calcDays, cnDate } = require('./calc');
 const { buildTravelDocx } = require('./docx');
@@ -104,11 +104,15 @@ function deleteDictItem(kind, key) {
 }
 
 /* ============ 设置 ============ */
-/** 下发到浏览器的设置：SMTP 授权码不出现在响应里，只给「是否已配置」布尔值 */
+/** 下发到浏览器的设置：密钥类不出现在响应里，只给「是否已配置」布尔值 */
 function publicSettings() {
   const s = getAllSettings();
-  s.mail_smtp_pass_set = !!s.mail_smtp_pass;
-  s.mail_smtp_pass = '';
+  for (const k of SECRET_SETTINGS) {
+    s[k + '_set'] = !!s[k];
+    s[k] = '';
+  }
+  // 兼容旧前端：SMTP 授权码的布尔标志名不变
+  s.mail_smtp_pass_set = !!getAllSettings().mail_smtp_pass;
   return s;
 }
 
@@ -123,8 +127,8 @@ function updateSettings(body) {
   let n = 0;
   for (const [k, v] of Object.entries(body || {})) {
     if (!allowed.has(k)) continue;
-    // 授权码前端拿不到明文：空串/掩码=不修改，__CLEAR__=清除
-    if (k === 'mail_smtp_pass') {
+    // 密钥前端拿不到明文：空串/掩码=不修改，__CLEAR__=清除
+    if (SECRET_SETTINGS.includes(k)) {
       const sv = String(v);
       if (sv === '' || /^•+$/.test(sv)) continue;
       if (sv === '__CLEAR__') { setSetting(k, ''); n++; continue; }
@@ -140,6 +144,28 @@ function updateSettings(body) {
   }
   if (n === 0) return bad('没有可更新的设置项');
   return good({ settings: publicSettings() });
+}
+
+/* ============ 账号体系（供前端决定渲染什么） ============ */
+/** 主应用是否强制登录 */
+function requireLogin() {
+  return getSetting('auth_require_login') === '1';
+}
+
+/** 登录页需要的公开配置。刻意不含任何密钥 */
+function authConfig() {
+  const s = getAllSettings();
+  const mailReady = !!(s.mail_smtp_host && s.mail_smtp_user && s.mail_smtp_pass && s.mail_from);
+  return good({
+    register_open: s.auth_register_open === '1',
+    require_login: s.auth_require_login === '1',
+    // 邮箱是唯一的验证码渠道：它配不上，注册与找回就都是断的，前端据此提示管理员
+    email_ready: mailReady,
+    domain_whitelist: s.auth_domain_whitelist || '',
+    session_hours: Number(s.auth_session_hours) || 8,
+    org_name: s.org_name || '',
+    has_admin: !!db.prepare("SELECT 1 FROM users WHERE role IN ('admin','super_admin')").get(),
+  });
 }
 
 /* ============ 发票邮件发送 ============ */
@@ -1053,7 +1079,7 @@ function mergeReceiptsPdf(projectId) {
 }
 
 module.exports = {
-  getSettings, updateSettings,
+  getSettings, updateSettings, requireLogin, authConfig,
   listPeriods, createPeriod, updatePeriod, deletePeriod,
   listColleges, createCollege, createMajor, updateCollege, deleteCollege, updateMajor, deleteMajor,
   listProjects, getProject, createProject, updateProject, deleteProject,

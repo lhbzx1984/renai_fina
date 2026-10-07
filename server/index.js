@@ -6,6 +6,7 @@ const path = require('node:path');
 const { URL } = require('node:url');
 const api = require('./lib/api');
 const { ROOT, UPLOAD_DIR } = require('./lib/db');
+const auth = require('./lib/auth');
 
 const PORT = Number(process.env.PORT) || 5180;
 // 默认只监听回环地址（本机开发）。云上由 Nginx 反代进来时同样应保持 127.0.0.1，
@@ -106,6 +107,22 @@ function parseMultipart(buf, boundary) {
   return parts;
 }
 
+/* ---------------- 会话级权限守卫 ----------------
+   注意这里的分工：Basic Auth 是「部署层」的外壳，拦的是数据面；
+   guardLogin / guardAdmin 是「业务层」的权限，决定谁能看到什么。
+   两者独立，任一层缺失都不至于让系统裸奔。 */
+function guardLogin(ctx) {
+  if (!ctx.user) return { __status: 401, error: '请先登录' };
+  return null;
+}
+function guardAdmin(ctx) {
+  if (!ctx.user) return { __status: 401, error: '请先登录' };
+  if (ctx.user.role !== 'admin' && ctx.user.role !== 'super_admin') {
+    return { __status: 403, error: '需要管理员权限' };
+  }
+  return null;
+}
+
 /* ---------------- 路由 ---------------- */
 const routes = [];
 function route(method, pattern, handler) {
@@ -117,6 +134,100 @@ function route(method, pattern, handler) {
 
 route('GET', '/api/health', () => ({ ok: true, data: { time: new Date().toISOString(), node: process.version } }));
 
+/* ================= 账号：注册 / 验证码 / 登录 / 会话 =================
+   这一组是「进入系统的门」，必须匿名可访问 —— 否则新用户连注册页都调不通。
+   门里面才是双层防护：Basic Auth 守数据面，会话 + 角色守权限面。 */
+route('GET', '/api/auth/config', () => api.authConfig());
+route('POST', '/api/auth/code/send', async (ctx) => {
+  // 与其余接口保持一致，统一包一层 data，前端 Api 层无需为它特例分支
+  const r = await auth.sendCode({ ...(await ctx.json()), ip: ctx.ip });
+  return r.ok ? { ok: true, data: r } : { ok: false, error: r.error };
+});
+route('POST', '/api/auth/register', async (ctx) => {
+  const r = auth.register(await ctx.json(), ctx.req);
+  return r.ok ? { ok: true, data: r } : { ok: false, error: r.error };
+});
+route('POST', '/api/auth/login', async (ctx) => {
+  const r = auth.login(await ctx.json(), ctx.req);
+  if (!r.ok) return { __status: 401, error: r.error };
+  ctx.setCookie(auth.sessionCookie(r.token, r.maxAge));
+  return { ok: true, data: { user: r.user } };
+});
+route('POST', '/api/auth/logout', (ctx) => {
+  auth.logout(ctx.req);
+  ctx.setCookie(auth.CLEAR_COOKIE);
+  return { ok: true, data: { ok: true } };
+});
+route('POST', '/api/auth/password/reset', async (ctx) => {
+  const r = auth.resetPassword(await ctx.json(), ctx.req);
+  return r.ok ? { ok: true, data: { ok: true } } : { ok: false, error: r.error };
+});
+
+/* 需要登录 */
+route('GET', '/api/auth/me', (ctx) => {
+  const g = guardLogin(ctx); if (g) return g;
+  return { ok: true, data: { user: auth.publicUser(ctx.user), require_login: api.requireLogin() } };
+});
+route('POST', '/api/auth/password/change', async (ctx) => {
+  const g = guardLogin(ctx); if (g) return g;
+  const r = auth.changePassword(ctx.user, await ctx.json(), auth.tokenFromRequest(ctx.req));
+  return r.ok ? { ok: true, data: { ok: true, kicked: r.kicked || 0 } } : { ok: false, error: r.error };
+});
+route('POST', '/api/auth/logout-all', (ctx) => {
+  const g = guardLogin(ctx); if (g) return g;
+  require('./lib/db').db.prepare('DELETE FROM sessions WHERE user_id = ?').run(ctx.user.id);
+  ctx.setCookie(auth.CLEAR_COOKIE);
+  return { ok: true, data: { ok: true } };
+});
+
+/* ================= 后台管理（仅管理员） ================= */
+route('GET', '/api/admin/stats', (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  return {
+    ok: true, data: {
+      users: auth.stats(),
+      register_open: require('./lib/db').getSetting('auth_register_open') === '1',
+      email_ready: !!(require('./lib/db').getSetting('mail_smtp_host') &&
+        require('./lib/db').getSetting('mail_smtp_user') &&
+        require('./lib/db').getSetting('mail_smtp_pass') &&
+        require('./lib/db').getSetting('mail_from')),
+      pending_receipts: require('./lib/db').db
+        .prepare("SELECT COUNT(*) AS n FROM receipts WHERE ocr_status='pending'").get().n,
+    },
+  };
+});
+route('GET', '/api/admin/users', (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  return { ok: true, data: { list: auth.listUsers(ctx.query) } };
+});
+route('GET', '/api/admin/users/:id', (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  return { ok: true, data: { user: auth.getUser(ctx.params.id) } };
+});
+route('POST', '/api/admin/users', async (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  const r = auth.createUserByAdmin(ctx.user, await ctx.json(), ctx.req);
+  return r.ok ? { ok: true, data: { user: r.user } } : { ok: false, error: r.error };
+});
+route('POST', '/api/admin/users/:id/:action', async (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  const r = auth.adminAction(ctx.user, ctx.params.id, ctx.params.action, await ctx.json().catch(() => ({})), ctx.req);
+  return r.ok ? { ok: true, data: r } : { ok: false, error: r.error };
+});
+route('DELETE', '/api/admin/users/:id', (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  const r = auth.adminAction(ctx.user, ctx.params.id, 'delete', {}, ctx.req);
+  return r.ok ? { ok: true, data: r } : { ok: false, error: r.error };
+});
+route('GET', '/api/admin/audit', (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  return { ok: true, data: { list: auth.listAudit(Number(ctx.query.limit) || 100) } };
+});
+route('DELETE', '/api/admin/audit', (ctx) => {
+  const g = guardAdmin(ctx); if (g) return g;
+  const r = auth.clearAudit(ctx.user, ctx.query, ctx.req);
+  return r.ok ? { ok: true, data: r } : { ok: false, error: r.error };
+});
 route('GET', '/api/settings', () => api.getSettings());
 route('PUT', '/api/settings', async (ctx) => api.updateSettings(await ctx.json()));
 
@@ -200,6 +311,8 @@ route('GET', '/api/projects/:id/export/fund_xlsx', (ctx) => ({ __file: api.lastE
 function serveStatic(req, res, pathname) {
   let rel = decodeURIComponent(pathname);
   if (rel === '/' || rel === '') rel = '/index.html';
+  // 后台管理入口：/admin 与 /admin/ 都落到 admin.html
+  if (rel === '/admin' || rel === '/admin/') rel = '/admin.html';
   const fp = path.normalize(path.join(PUBLIC_DIR, rel));
   if (!fp.startsWith(PUBLIC_DIR)) return sendText(res, 403, 'Forbidden');
   if (!fs.existsSync(fp) || !fs.statSync(fp).isFile()) {
@@ -310,12 +423,30 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  // 健康检查放行鉴权，便于 uptime 监控与 Nginx 探活（只返回版本与时间，不含业务数据）
-  if (pathname !== '/api/health' && AUTH_ENABLED && !authOk(req)) return requireAuth(req, res);
+  /* Basic Auth 放行策略。想清楚一件事：认证端点必须放行，否则新用户打不开注册页；
+     静态页面也放行，因为它们只是空壳，数据全在 API 里。
+     真正被这层护住的是 /api/projects、/api/receipts 这类业务数据接口。
+     若你希望「连登录页也要先过 Basic 口令」，启动时加 AUTH_STRICT=1 环境变量。 */
+  const AUTH_STRICT = process.env.AUTH_STRICT === '1';
+  const basicBypass = pathname === '/api/health' ||
+    (!AUTH_STRICT && (pathname.startsWith('/api/auth/') || !pathname.startsWith('/api/')));
+  if (!basicBypass && AUTH_ENABLED && !authOk(req)) return requireAuth(req, res);
 
   if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
 
   try {
+    /* 业务数据接口的登录门禁。
+       /api/auth/* 已在路由内自行判断，这里放行；其余一律要求会话。
+       ai_queue.js 这类本机命令行工具走 Bearer 机器令牌，由 userFromRequest 识别。 */
+    // /api/health 必须始终放行：Nginx 探活与 uptime 监控不会有会话，
+    // 一旦被门禁拦掉，健康检查全红却查不出原因。
+    const LOGIN_OPEN = pathname === '/api/health' || pathname.startsWith('/api/auth/');
+    if (pathname.startsWith('/api/') && !LOGIN_OPEN && api.requireLogin()) {
+      if (!auth.userFromRequest(req)) {
+        return sendJson(res, 401, { ok: false, error: '请先登录', need_login: true });
+      }
+    }
+
     /* CSV 模板直出 */
     if (pathname === '/api/receipts/template.csv') {
       const t = api.receiptTemplate();
@@ -376,10 +507,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     const query = Object.fromEntries(u.searchParams.entries());
-    const ctx = { params, query, req, res, files, fields, json: async () => fields };
+    const ctx = {
+      params, query, req, res, files, fields,
+      json: async () => fields,
+      user: auth.userFromRequest(req),   // 未登录为 null
+      ip: auth.clientIp(req),
+      setCookie: (v) => res.setHeader('Set-Cookie', v),
+    };
 
     const out = await matched.handler(ctx);
 
+    if (out && out.__status) return sendJson(res, out.__status, { ok: false, error: out.error });
     if (!out) return sendJson(res, 204, { ok: true });
 
     /* 导出文件：直接下载 */
@@ -406,6 +544,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/* 启动前置：清掉过期会话/验证码，并保证存在超级管理员 */
+auth.purgeExpired();
+const bootAdmin = auth.ensureSuperAdmin();
+
 server.listen(PORT, HOST, () => {
   console.log('');
   console.log('  ╭──────────────────────────────────────────────╮');
@@ -416,6 +558,16 @@ server.listen(PORT, HOST, () => {
   console.log(`   ▸ 数据库：      ${path.join(process.env.DATA_DIR || 'data', 'reimburse.db')}`);
   console.log(`   ▸ 导出目录：    ${process.env.EXPORT_DIR || 'exports'}`);
   console.log(`   ▸ 访问鉴权：    ${AUTH_ENABLED ? '已启用（Basic Auth）' : '未启用 —— 仅限内网，切勿直接暴露公网'}`);
+  console.log(`   ▸ 账号登录：    ${api.requireLogin() ? '已启用（注册需审批）' : '未启用 —— 任何人可操作业务数据，强烈建议开启'}`);
+  console.log(`   ▸ 后台管理：    http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}/admin`);
+  if (bootAdmin) {
+    console.log('');
+    console.log('   ┌── 超级管理员初始账号（首次启动自动生成）────────────┐');
+    console.log(`   │  登录名：${bootAdmin.username}`);
+    console.log(`   │  密　码：${bootAdmin.password}`);
+    console.log('   │  已写入 data/_admin_init.txt，登录后请立即修改密码   │');
+    console.log('   └──────────────────────────────────────────────────────┘');
+  }
   console.log(`   ▸ 停止服务：    Ctrl + C`);
   console.log('');
 });
