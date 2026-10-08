@@ -2,6 +2,10 @@
 
 把本机 `data/` 里的业务数据迁到服务器：**数据库 + 邮箱配置 + 票据原件 + 导出表单**。
 
+> ⚠️ **本文是「整库替换」**：会把目标服务器的库整体换掉，目标机上已有的其他用户会被覆盖。
+> 如果你只想迁**某一个用户**（比如只把刘海斌的数据搬到新部署的系统上、不动其他人），
+> 请看 **[MIGRATE-USER.md](./MIGRATE-USER.md)**（合并式导入，其他用户不受影响）。
+
 ---
 
 ## 一、迁移什么 / 不迁什么
@@ -186,6 +190,8 @@ systemctl start reimburse
 
 | 文件 | 运行位置 | 作用 |
 |---|---|---|
-| `deploy/migrate/export-bundle.js` | 旧机器 | 生成快照 + 清洗 + 打包，产出 bundle |
+| `deploy/migrate/export-bundle.js` | 旧机器 | 生成快照 + 清洗 + 打包，产出 bundle（整库） |
 | `deploy/migrate/verify-bundle.js` | 任意 | 校验 bundle 完整性与路径清洗结果 |
-| `deploy/migrate/import-bundle.sh` | 服务器 | 备份 → 替换 → 启服务 → 核对 |
+| `deploy/migrate/import-bundle.sh` | 服务器 | 备份 → **替换** → 启服务 → 核对 |
+| `deploy/migrate/export-user.js` | 旧机器 | 只导出**某一个用户**的数据（[MIGRATE-USER.md](./MIGRATE-USER.md)） |
+| `deploy/migrate/import-user.js` | 服务器 | 备份 → **合并**导入 → 核对其他用户未受影响 |

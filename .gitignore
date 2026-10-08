@@ -6,8 +6,10 @@ _trash_exports/
 
 # ---- 迁移产物（含真实数据库与邮箱授权码，绝不上库）----
 deploy/migrate/_bundle/
+deploy/migrate/_user_*/
 reimburse.tar.gz
 reimburse-data.tar.gz
+reimburse-user.tar.gz
 
 # ---- 本机环境 / 依赖 ----
 node_modules/

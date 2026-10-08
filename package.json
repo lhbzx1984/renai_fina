@@ -16,7 +16,9 @@
     "check:ids": "node server/idcheck.js",
     "verify:export": "python server/verify_exports.py",
     "migrate:export": "node deploy/migrate/export-bundle.js",
-    "migrate:verify": "node deploy/migrate/verify-bundle.js"
+    "migrate:verify": "node deploy/migrate/verify-bundle.js",
+    "migrate:export-user": "node deploy/migrate/export-user.js",
+    "migrate:import-user": "node deploy/migrate/import-user.js"
   },
   "engines": {
     "node": ">=22.5.0"
