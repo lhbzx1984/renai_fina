@@ -76,6 +76,8 @@ const U_USER3 = `${P}_u3${stamp}`;
 const MAIL1 = `${P}_1_${stamp}@example.com`;
 const MAIL2 = `${P}_2_${stamp}@example.com`;
 const MAIL3 = `${P}_3_${stamp}@example.com`;
+const MAIL4 = `${P}_4_${stamp}@example.com`;
+const U_USER4 = `${P}_u4${stamp}`; // 4.5 自动开通模式专用（U_USER3 后面还有其他用例）
 const PW = 'Smoke#2026';
 
 /** 取超管初始密码（首次启动时写入 data/_admin_init.txt） */
@@ -155,6 +157,14 @@ async function cleanAll(adminCookie) {
     const badMail = await req('POST', '/api/auth/code/send', { channel: 'email', target: 'not-an-email', purpose: 'register' });
     ok('非法邮箱不发验证码', badMail.status === 400 || badMail.data.ok === false, badMail.data);
 
+    // 注册后是否「邮箱验证通过即开通」是可切开关，两种模式都要覆盖：
+    // 先强制回审批模式，验证审批状态机；第 4.5 节再切到自动开通模式。
+    const cur = await req('GET', '/api/settings', null, adminCookie);
+    const origAuto = (cur.data && cur.data.data && cur.data.data.settings
+      && cur.data.data.settings.auth_register_auto_approve) || '1';
+    const setAuto = (v) => req('PUT', '/api/settings', { auth_register_auto_approve: v }, adminCookie);
+    await setAuto('0');
+
     const code1 = seedCode(MAIL1, 'register', '100001');
     const regBad = await req('POST', '/api/auth/register', {
       username: U_USER, name: '冒烟用户', email: MAIL1, channel: 'email',
@@ -210,6 +220,24 @@ async function cleanAll(adminCookie) {
 
     const rejLogin = await req('POST', '/api/auth/login', { account: U_USER2, password: PW });
     ok('被驳回账号无法登录', rejLogin.status === 401, { status: rejLogin.status });
+
+    /* ---------- 4.5 自动开通模式（默认）：邮箱验证通过即 active ---------- */
+    console.log('\n【4.5】邮箱验证通过即开通');
+    await setAuto('1');
+    const code4 = seedCode(MAIL4, 'register', '100004');
+    const reg3 = await req('POST', '/api/auth/register', {
+      username: U_USER4, name: '冒烟用户4', email: MAIL4, channel: 'email',
+      password: PW, code: code4,
+    });
+    ok('自动开通模式：注册后即 active',
+      reg3.data && reg3.data.data && reg3.data.data.user && reg3.data.data.user.status === 'active',
+      reg3.data && reg3.data.data);
+    const autoLogin = await req('POST', '/api/auth/login', { account: MAIL4, password: PW });
+    ok('自动开通模式：注册即可用邮箱登录',
+      autoLogin.status === 200 && !!autoLogin.token, { status: autoLogin.status });
+    // 还原真实配置：测试不该改坏库里的开关
+    await setAuto(origAuto);
+    await req('POST', '/api/auth/logout', {}, autoLogin.token);
 
     /* ---------- 5. 登录后访问业务接口 ---------- */
     console.log('\n【5】会话与权限');

@@ -1713,6 +1713,18 @@ const App = {
           : '未配置，注册页会提示无法自助注册 · 待完善：' + (g.missing || []).join('、');
         hint.style.color = g.ready ? 'var(--ink-3)' : 'var(--warn, #b26a00)';
       }
+      // 邮箱验证通过是否直接开通（默认开通；关掉后注册需管理员审批）
+      const aa = $('#gm_auto_approve');
+      if (aa) {
+        aa.checked = String((this.state.settings || {}).auth_register_auto_approve) !== '0';
+        aa.onchange = async () => {
+          try {
+            const r = await Api.put('/api/settings', { auth_register_auto_approve: aa.checked ? '1' : '0' });
+            this.state.settings = r.settings;
+            toast(aa.checked ? '已设为：邮箱验证通过即开通账号' : '已设为：注册后需管理员审批', 'ok');
+          } catch (e) { aa.checked = !aa.checked; toast(e.message, 'err'); }
+        };
+      }
     } catch (e) { card.style.display = 'none'; }
   },
 

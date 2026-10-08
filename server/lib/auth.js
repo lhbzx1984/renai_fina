@@ -323,7 +323,9 @@ function register(body, req) {
   const v = checkCode({ channel: 'email', target: email, purpose: 'register', code });
   if (!v.ok) return v;
 
-  const auto = isWhitelisted(email);
+  // 邮箱验证码校验通过即视为身份已核：默认直接开通，管理员可关掉改成人工审批。
+  // 白名单域名始终自动通过（即便全局关了审批也走这条）。
+  const auto = isWhitelisted(email) || String(getSetting('auth_register_auto_approve')) !== '0';
   const { hash, salt } = hashPassword(password);
   const info = db.prepare(
     `INSERT INTO users(username,name,email,phone,job_no,password_hash,password_salt,role,status,
@@ -339,7 +341,8 @@ function register(body, req) {
     String(body.reason || '').trim().slice(0, 200) || null,
   );
   const id = info.lastInsertRowid;
-  audit(null, 'register', username, `渠道=邮箱 目标=${email} ${auto ? '白名单自动通过' : '待审批'}`, clientIp(req));
+  const why = auto ? (isWhitelisted(email) ? '白名单自动通过' : '邮箱验证通过自动开通') : '待审批';
+  audit(null, 'register', username, `渠道=邮箱 目标=${email} ${why}`, clientIp(req));
 
   return {
     ok: true,

@@ -308,6 +308,7 @@ const DEFAULT_SETTINGS = {
   auth_register_open: '1',  // 1=开放注册（仍按白名单/审批分流）；0=关闭，仅管理员可建号
   auth_require_login: '1',  // 1=主应用强制登录；0=沿用旧行为（仅 Basic Auth 兜底）
   auth_domain_whitelist: '',// 邮箱域名白名单，逗号分隔，如 tjrac.edu.cn —— 命中即自动通过
+  auth_register_auto_approve: '1', // 1=邮箱验证码校验通过即开通账号（可登录）；0=需管理员审批
   auth_code_ttl: '300',     // 验证码有效期（秒）
   auth_code_resend: '60',   // 同一目标重发冷却（秒）
   auth_login_fail_max: '5', // 连续失败次数上限，超过则锁定
