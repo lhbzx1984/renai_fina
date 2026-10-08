@@ -9,8 +9,33 @@
  * 用法： node mail_e2e.js          （服务需已在 5180 运行）
  */
 const net = require('node:net');
+const fs = require('node:fs');
+const path = require('node:path');
+const { db } = require('./lib/db');
 const BASE = process.env.BASE || 'http://127.0.0.1:5180';
 const PORT = 2525;
+
+/** 邮件配置现在是每人一份：测试期间临时写进「测试账号的个人设置」，跑完删掉，
+ *  既不碰全局配置（系统发验证码用），也不会污染刘海斌的真实授权码。
+ *  业务接口都要登录，这里以超管身份跑（超管能看全部项目，便于挑真实项目）。 */
+let COOKIE = null;
+async function loginAsAdmin() {
+  let pw = process.env.SUPER_ADMIN_PASS || '';
+  if (!pw) {
+    try {
+      pw = (fs.readFileSync(path.join(__dirname, '..', 'data', '_admin_init.txt'), 'utf8')
+        .match(/密码：(\S+)/) || [])[1] || '';
+    } catch (e) { /* 未启用登录 */ }
+  }
+  if (!pw) return null;
+  const r = await fetch(BASE + '/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ account: process.env.SUPER_ADMIN_USER || 'admin', password: pw }),
+  });
+  const sc = r.headers.get('set-cookie') || '';
+  COOKIE = (sc.match(/sid=([^;]+)/) || [])[1] || null;
+  return COOKIE;
+}
 
 let raw = '';           // 收到的完整会话（含 DATA 正文）
 let inData = false;
@@ -51,10 +76,16 @@ const server = net.createServer((sock) => {
 
 async function put(body) {
   return (await fetch(`${BASE}/api/settings`, {
-    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', Cookie: 'sid=' + COOKIE },
+    body: JSON.stringify(body),
   })).json();
 }
-const getJson = async (u) => (await fetch(BASE + u)).json();
+const getJson = async (u) => (await fetch(BASE + u, { headers: { Cookie: 'sid=' + COOKIE } })).json();
+const post = async (u, body) => (await fetch(BASE + u, {
+  method: 'POST', headers: { 'content-type': 'application/json', Cookie: 'sid=' + COOKIE },
+  body: body ? JSON.stringify(body) : undefined,
+})).json();
 
 /** 找一个有「已审核 PDF 票据」的真实项目来发 */
 async function pickProject() {
@@ -70,6 +101,9 @@ async function pickProject() {
 }
 
 async function main() {
+  await loginAsAdmin();
+  if (!COOKIE) { console.log('无法以超管登录（需要 data/_admin_init.txt 里的初始密码），测试中止'); process.exit(2); }
+  const me = (await getJson('/api/auth/me')).data.user;
   const target = await pickProject();
   if (!target) { console.log('没有可用于测试的项目（需含已审核的 PDF 票据）'); process.exit(2); }
   console.log(`\n=== 发票邮件发送 · 端到端自测 ===`);
@@ -88,7 +122,7 @@ async function main() {
     const st = (await getJson('/api/mail/status')).data;
     need(st.configured === true, '配置齐全时 configured=true');
 
-    const res = await (await fetch(`${BASE}/api/projects/${target.p.id}/send-invoices`, { method: 'POST' })).json();
+    const res = await post(`/api/projects/${target.p.id}/send-invoices`);
     console.log('  发送结果：' + JSON.stringify(res.data || res.error));
     need(res.ok === true, '发送成功');
     need(res.data && res.data.count === target.n, `附件数 ${res.data ? res.data.count : 0} = 已审核 PDF ${target.n}`);
@@ -121,16 +155,11 @@ async function main() {
     }
     need(okPdf === target.n, `附件 base64 解出合法 PDF 头 ${okPdf}/${target.n}`);
 
-    const t = await (await fetch(`${BASE}/api/mail/test`, { method: 'POST' })).json();
+    const t = await post('/api/mail/test');
     need(t.ok === true, '测试邮件（无附件）发送成功');
   } finally {
-    // 恢复原配置：授权码清空、主机/端口/账号还原
-    await put({
-      mail_to: before.to, mail_from: before.from, mail_from_name: before.fromName,
-      mail_smtp_host: before.host, mail_smtp_port: String(before.port),
-      mail_smtp_secure: before.secure ? '1' : '0',
-      mail_smtp_user: before.user, mail_smtp_pass: '__CLEAR__',
-    });
+    // 清理：直接删掉测试期间写进个人设置的邮件配置，一行不留
+    db.prepare("DELETE FROM settings WHERE user_id = ? AND key LIKE 'mail_%'").run(me.id);
     server.close();
   }
 

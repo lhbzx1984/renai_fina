@@ -104,7 +104,7 @@ const App = {
       else if (v === 'detail' && this.state.currentId) await this.loadDetail(this.state.currentId);
       else if (v === 'receipts') await this.loadReceiptCenter();
       else if (v === 'dictionary') this.renderDictionary();
-      else if (v === 'settings') { const s = await Api.get('/api/settings'); this.state.settings = s.settings; this.renderSettings(); }
+      else if (v === 'settings') { const s = await Api.get('/api/settings'); this.state.settings = s.settings; this.state.scope = s.scope || {}; this.renderSettings(); }
       else if (v === 'guide') this.renderGuide();
     } catch (e) { toast(e.message, 'err'); }
   },
@@ -1677,9 +1677,25 @@ const App = {
     // 授权码不下发，已配置时给占位掩码；留空即表示不修改
     $('#set_mail_smtp_pass').value = '';
     $('#set_mail_smtp_pass').placeholder = s.mail_smtp_pass_set ? '已保存（留空则不修改）' : '邮箱网页端生成的授权码，非登录密码';
+    this.applySettingsScope(this.state.scope);
     this.renderMailStatus();
     this.renderDictLists();
     this.renderStdPreview();
+  },
+
+  /* 设置项作用域：带「全校统一」的项只有管理员能改，普通用户直接禁用，免得填了保存不上 */
+  applySettingsScope(scope) {
+    const locked = !!(scope && scope.global_locked);
+    for (const id of ['set_meal_teacher', 'set_city_teacher', 'set_student_ratio', 'set_org_name', 'set_currency_prefix']) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = locked;
+    }
+    const hint = $('#globalLockHint');
+    if (hint) {
+      hint.textContent = locked
+        ? '带「全校统一」标记的报销标准由管理员维护，如需调整请联系管理员；「我的收款与发票邮箱」是你个人的设置，别人看不到。'
+        : '';
+    }
   },
 
   /* ---------- 发票邮件发送 ---------- */

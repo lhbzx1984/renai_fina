@@ -25,6 +25,16 @@ function findChrome() {
   return null;
 }
 
+/** 系统开启「必须登录」后，UI 里所有接口都要会话。这里读超管初始密码，
+ *  让烟测在登录态下跑（与 smoke.js 的做法一致）。 */
+function adminPassword() {
+  if (process.env.SUPER_ADMIN_PASS) return process.env.SUPER_ADMIN_PASS;
+  try {
+    return (fs.readFileSync(path.join(__dirname, '..', 'data', '_admin_init.txt'), 'utf8')
+      .match(/密码：(\S+)/) || [])[1] || '';
+  } catch (e) { return ''; }
+}
+
 /** 构造注入脚本：记录报错 + 分步模拟点击 */
 const DIAG_SCRIPT = `
 window.__errs = [];
@@ -463,7 +473,14 @@ function main() {
   console.log('浏览器:', chrome);
 
   const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
-  const diagHtml = html.replace('</body>', '<script src="/__diag.js"></script></body>');
+  // 登录要赶在 app.js 之前：同步 XHR 拿到会话 Cookie，App.init 的请求才带得上
+  const pw = adminPassword();
+  const loginScript = pw ? `<script>(function(){try{var x=new XMLHttpRequest();x.open('POST','/api/auth/login',false);`
+    + `x.setRequestHeader('Content-Type','application/json');`
+    + `x.send(JSON.stringify({account:${JSON.stringify(process.env.SUPER_ADMIN_USER || 'admin')},password:${JSON.stringify(pw)}}));}catch(e){}})();</script>` : '';
+  const diagHtml = html
+    .replace('</head>', loginScript + '</head>')
+    .replace('</body>', '<script src="/__diag.js"></script></body>');
   fs.writeFileSync(path.join(PUBLIC, '__diag.html'), diagHtml);
   fs.writeFileSync(path.join(PUBLIC, '__diag.js'), DIAG_SCRIPT);
 
@@ -487,6 +504,19 @@ function main() {
 
   fs.unlinkSync(path.join(PUBLIC, '__diag.html'));
   fs.unlinkSync(path.join(PUBLIC, '__diag.js'));
+
+  /* 烟测里点过「保存设置」：邮件/收款设置现在是每人一份，会在超管名下留下空配置项。
+     跑完删掉，别让测试痕迹驻留在真实库里。 */
+  try {
+    const { db } = require('./lib/db');
+    const ids = db.prepare("SELECT id FROM users WHERE role IN ('admin','super_admin')").all().map((u) => u.id);
+    let n = 0;
+    for (const id of ids) {
+      n += db.prepare("DELETE FROM settings WHERE user_id = ? AND key LIKE 'mail_%'").run(id).changes;
+      n += db.prepare("DELETE FROM settings WHERE user_id = ? AND key LIKE 'payee_%' AND (value IS NULL OR value = '')").run(id).changes;
+    }
+    if (n) console.log(`[清理] 删除烟测写入的个人设置 ${n} 行`);
+  } catch (e) { /* 清理失败不影响测试结果 */ }
 
   const m = stdout.match(/<pre id="__diag">([\s\S]*?)<\/pre>/);
   if (!m) {

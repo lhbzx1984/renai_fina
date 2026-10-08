@@ -228,8 +228,8 @@ route('DELETE', '/api/admin/audit', (ctx) => {
   const r = auth.clearAudit(ctx.user, ctx.query, ctx.req);
   return r.ok ? { ok: true, data: r } : { ok: false, error: r.error };
 });
-route('GET', '/api/settings', () => api.getSettings());
-route('PUT', '/api/settings', async (ctx) => api.updateSettings(await ctx.json()));
+route('GET', '/api/settings', (ctx) => api.getSettings(ctx.user));
+route('PUT', '/api/settings', async (ctx) => api.updateSettings(await ctx.json(), ctx.user));
 
 route('GET', '/api/periods', () => api.listPeriods());
 route('POST', '/api/periods', async (ctx) => api.createPeriod(await ctx.json()));
@@ -250,62 +250,63 @@ route('POST', '/api/majors', async (ctx) => api.createMajor(await ctx.json()));
 route('PUT', '/api/majors/:id', async (ctx) => api.updateMajor(ctx.params.id, await ctx.json()));
 route('DELETE', '/api/majors/:id', (ctx) => api.deleteMajor(ctx.params.id));
 
-route('GET', '/api/dashboard', () => api.dashboard());
+route('GET', '/api/dashboard', (ctx) => api.dashboard(ctx.user));
 
-route('GET', '/api/projects', (ctx) => api.listProjects(ctx.query));
-route('POST', '/api/projects', async (ctx) => api.createProject(await ctx.json()));
-route('GET', '/api/projects/:id', (ctx) => api.getProject(ctx.params.id));
-route('PUT', '/api/projects/:id', async (ctx) => api.updateProject(ctx.params.id, await ctx.json()));
-route('DELETE', '/api/projects/:id', (ctx) => api.deleteProject(ctx.params.id));
+/* 以下业务路由全部带 ctx.user：api 层据此做归属过滤与越权拦截 */
+route('GET', '/api/projects', (ctx) => api.listProjects(ctx.query, ctx.user));
+route('POST', '/api/projects', async (ctx) => api.createProject(await ctx.json(), ctx.user));
+route('GET', '/api/projects/:id', (ctx) => api.getProject(ctx.params.id, ctx.user));
+route('PUT', '/api/projects/:id', async (ctx) => api.updateProject(ctx.params.id, await ctx.json(), ctx.user));
+route('DELETE', '/api/projects/:id', (ctx) => api.deleteProject(ctx.params.id, ctx.user));
 
-route('POST', '/api/projects/:id/trips', async (ctx) => api.createTrip(ctx.params.id, await ctx.json()));
-route('PUT', '/api/trips/:id', async (ctx) => api.updateTrip(ctx.params.id, await ctx.json()));
-route('DELETE', '/api/trips/:id', (ctx) => api.deleteTrip(ctx.params.id));
+route('POST', '/api/projects/:id/trips', async (ctx) => api.createTrip(ctx.params.id, await ctx.json(), ctx.user));
+route('PUT', '/api/trips/:id', async (ctx) => api.updateTrip(ctx.params.id, await ctx.json(), ctx.user));
+route('DELETE', '/api/trips/:id', (ctx) => api.deleteTrip(ctx.params.id, ctx.user));
 
-route('GET', '/api/projects/:id/members', (ctx) => api.listMembers(ctx.params.id));
-route('POST', '/api/projects/:id/members', async (ctx) => api.createMember(ctx.params.id, await ctx.json()));
-route('PUT', '/api/members/:id', async (ctx) => api.updateMember(ctx.params.id, await ctx.json()));
-route('DELETE', '/api/members/:id', (ctx) => api.deleteMember(ctx.params.id));
-route('GET', '/api/people', (ctx) => api.searchPeople(ctx.query.name || '', ctx.query.job_no || ''));
+route('GET', '/api/projects/:id/members', (ctx) => api.listMembers(ctx.params.id, ctx.user));
+route('POST', '/api/projects/:id/members', async (ctx) => api.createMember(ctx.params.id, await ctx.json(), ctx.user));
+route('PUT', '/api/members/:id', async (ctx) => api.updateMember(ctx.params.id, await ctx.json(), ctx.user));
+route('DELETE', '/api/members/:id', (ctx) => api.deleteMember(ctx.params.id, ctx.user));
+route('GET', '/api/people', (ctx) => api.searchPeople(ctx.query.name || '', ctx.query.job_no || '', ctx.user));
 
-route('GET', '/api/projects/:id/receipts', (ctx) => api.listReceipts(ctx.params.id, ctx.query.status));
+route('GET', '/api/projects/:id/receipts', (ctx) => api.listReceipts(ctx.params.id, ctx.query.status, ctx.user));
 // 该项目全部 PDF 票据合并成一个 PDF（预览 / 打印），inline 直出供 iframe 加载
-route('GET', '/api/projects/:id/receipts/merged.pdf', (ctx) => api.mergeReceiptsPdf(ctx.params.id));
-route('POST', '/api/projects/:id/receipts', async (ctx) => api.createReceipt(ctx.params.id, await ctx.json()));
-route('POST', '/api/projects/:id/receipts/upload', (ctx) => ctx.files ? api.uploadReceipts(ctx.params.id, ctx.files, ctx.fields.hints ? String(ctx.fields.hints).split('||') : []) : Promise.resolve({ ok: false, error: '未收到文件' }));
+route('GET', '/api/projects/:id/receipts/merged.pdf', (ctx) => api.mergeReceiptsPdf(ctx.params.id, ctx.user));
+route('POST', '/api/projects/:id/receipts', async (ctx) => api.createReceipt(ctx.params.id, await ctx.json(), ctx.user));
+route('POST', '/api/projects/:id/receipts/upload', (ctx) => ctx.files ? api.uploadReceipts(ctx.params.id, ctx.files, ctx.fields.hints ? String(ctx.fields.hints).split('||') : [], ctx.user) : Promise.resolve({ ok: false, error: '未收到文件' }));
 route('POST', '/api/projects/:id/receipts/import', async (ctx) => {
   const body = await ctx.json();
-  return api.importReceipts(ctx.params.id, body.content || '', body.format || 'csv');
+  return api.importReceipts(ctx.params.id, body.content || '', body.format || 'csv', ctx.user);
 });
 route('GET', '/api/receipts/template', () => {
   const t = api.receiptTemplate();
   return { ok: true, data: { ...t, download: '/api/receipts/template.csv' } };
 });
 route('GET', '/api/receipts/template.csv', () => null); // 特殊：直出文本
-route('PUT', '/api/receipts/:id', async (ctx) => api.updateReceipt(ctx.params.id, await ctx.json()));
-route('POST', '/api/receipts/:id/review', async (ctx) => api.reviewReceipt(ctx.params.id, await ctx.json()));
-route('POST', '/api/receipts/:id/reocr', (ctx) => api.reocrReceipt(ctx.params.id));
-route('DELETE', '/api/receipts/:id', (ctx) => api.deleteReceipt(ctx.params.id));
+route('PUT', '/api/receipts/:id', async (ctx) => api.updateReceipt(ctx.params.id, await ctx.json(), ctx.user));
+route('POST', '/api/receipts/:id/review', async (ctx) => api.reviewReceipt(ctx.params.id, await ctx.json(), ctx.user));
+route('POST', '/api/receipts/:id/reocr', (ctx) => api.reocrReceipt(ctx.params.id, ctx.user));
+route('DELETE', '/api/receipts/:id', (ctx) => api.deleteReceipt(ctx.params.id, ctx.user));
 
-/* 发票邮件发送：把项目里的 PDF 发票逐张作为附件发到指定邮箱 */
-route('GET', '/api/mail/status', () => api.mailStatus());
-route('POST', '/api/mail/test', async (ctx) => api.sendTestMail(await ctx.json().catch(() => ({}))));
+/* 发票邮件发送：把项目里的 PDF 发票逐张作为附件发到指定邮箱（邮件配置按用户隔离） */
+route('GET', '/api/mail/status', (ctx) => api.mailStatus(ctx.user));
+route('POST', '/api/mail/test', async (ctx) => api.sendTestMail(await ctx.json().catch(() => ({})), ctx.user));
 route('POST', '/api/projects/:id/send-invoices', async (ctx) =>
-  api.sendProjectInvoices(ctx.params.id, await ctx.json().catch(() => ({}))));
+  api.sendProjectInvoices(ctx.params.id, await ctx.json().catch(() => ({})), ctx.user));
 
 /* AI 视觉提取队列：规则引擎解不出的票据入队，等 AI 助手看图补录 */
-route('GET', '/api/ai/queue', () => api.listAiQueue());
-route('POST', '/api/ai/receipts/:id/fields', async (ctx) => api.applyAiFields(ctx.params.id, await ctx.json()));
+route('GET', '/api/ai/queue', (ctx) => api.listAiQueue(ctx.user));
+route('POST', '/api/ai/receipts/:id/fields', async (ctx) => api.applyAiFields(ctx.params.id, await ctx.json(), ctx.user));
 route('POST', '/api/ai/receipts/:id/skip', async (ctx) => {
   let body = {};
   try { body = await ctx.json(); } catch (e) { /* 无请求体 */ }
-  return api.skipAiReceipt(ctx.params.id, body);
+  return api.skipAiReceipt(ctx.params.id, body, ctx.user);
 });
 
-route('GET', '/api/projects/:id/preview/travel', (ctx) => api.buildTravelPayload(ctx.params.id));
-route('GET', '/api/projects/:id/export/travel_docx', (ctx) => ({ __file: api.exportTravelDocx(ctx.params.id) }));
-route('POST', '/api/projects/:id/export/fund_xlsx', async (ctx) => ({ __file: api.exportFundXlsx(ctx.params.id, await ctx.json().catch(() => ({}))) }));
-route('GET', '/api/projects/:id/export/fund_xlsx', (ctx) => ({ __file: api.lastExport(ctx.params.id, 'fund_xlsx') }));
+route('GET', '/api/projects/:id/preview/travel', (ctx) => api.buildTravelPayload(ctx.params.id, ctx.user));
+route('GET', '/api/projects/:id/export/travel_docx', (ctx) => ({ __file: api.exportTravelDocx(ctx.params.id, ctx.user) }));
+route('POST', '/api/projects/:id/export/fund_xlsx', async (ctx) => ({ __file: api.exportFundXlsx(ctx.params.id, await ctx.json().catch(() => ({})), ctx.user) }));
+route('GET', '/api/projects/:id/export/fund_xlsx', (ctx) => ({ __file: api.lastExport(ctx.params.id, 'fund_xlsx', ctx.user) }));
 
 /* ---------------- 静态文件 ---------------- */
 function serveStatic(req, res, pathname) {
@@ -459,11 +460,15 @@ const server = http.createServer(async (req, res) => {
       return res.end(b);
     }
 
-    /* 上传票据文件预览 */
+    /* 上传票据文件预览。
+       这里必须查归属：文件名是有规律的（时间戳_序号_原名），
+       不校验的话任何登录用户猜到名字就能下载别人的发票原件。 */
     if (pathname.startsWith('/api/files/')) {
       const name = path.basename(decodeURIComponent(pathname.slice('/api/files/'.length)));
       const fp = path.join(UPLOAD_DIR, name);
       if (!fp.startsWith(UPLOAD_DIR) || !fs.existsSync(fp)) return sendText(res, 404, '文件不存在');
+      const user = auth.userFromRequest(req);
+      if (!api.canAccessFile(name, user)) return sendText(res, 403, '无权访问该文件');
       const b = fs.readFileSync(fp);
       const ext = path.extname(name).toLowerCase();
       res.writeHead(200, {

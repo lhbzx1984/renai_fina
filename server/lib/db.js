@@ -30,8 +30,10 @@ db.exec('PRAGMA foreign_keys = ON;');
 const SCHEMA = `
 -- ========== 设置项（键值） ==========
 CREATE TABLE IF NOT EXISTS settings (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
+  key     TEXT NOT NULL,
+  user_id INTEGER NOT NULL DEFAULT 0,   -- 0=全局共享；>0=该用户的个人设置（覆盖全局）
+  value   TEXT NOT NULL,
+  PRIMARY KEY (key, user_id)
 );
 
 -- ========== 字典 ==========
@@ -257,6 +259,32 @@ ensureColumn('trips', 'member_ids', 'member_ids TEXT');
 /* AI 视觉提取队列：'' 无需处理 | queued 等待 AI 看图 | done 已回填 | skipped 人工放弃 */
 ensureColumn('receipts', 'ai_status', "ai_status TEXT NOT NULL DEFAULT ''");
 ensureColumn('receipts', 'ai_at', 'ai_at TEXT');
+/* 数据归属：项目属于创建它的用户。老库补列后由 migrate_ownership.js 回填归属人 */
+ensureColumn('projects', 'owner_user_id', 'owner_user_id INTEGER');
+db.exec('CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id)');
+
+/* settings 从「单主键 key」升级为「复合主键 (key,user_id)」。
+   SQLite 改不了主键，老库只能重建表；不重建就存不进个人设置（邮件/收款项）。 */
+(function migrateSettingsScope() {
+  try {
+    const cols = db.prepare('PRAGMA table_info(settings)').all();
+    if (cols.some((c) => c.name === 'user_id')) return;
+    db.exec(`
+      CREATE TABLE settings_new (
+        key     TEXT NOT NULL,
+        user_id INTEGER NOT NULL DEFAULT 0,
+        value   TEXT NOT NULL,
+        PRIMARY KEY (key, user_id)
+      );
+      INSERT INTO settings_new(key, user_id, value) SELECT key, 0, value FROM settings;
+      DROP TABLE settings;
+      ALTER TABLE settings_new RENAME TO settings;
+    `);
+    console.log('[db] settings 表已升级为复合主键 (key,user_id)，支持个人级设置');
+  } catch (e) {
+    console.error('[db] settings 表升级失败：' + e.message);
+  }
+})();
 
 /* ---------------- 工具 ---------------- */
 const DEFAULT_SETTINGS = {
@@ -290,24 +318,61 @@ const DEFAULT_SETTINGS = {
 /** 密钥类设置项：接口一律不回传明文，只给「是否已配置」布尔值 */
 const SECRET_SETTINGS = ['mail_smtp_pass'];
 
-function getSetting(key) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+/* 用户级设置项：每人一份，别人看不到也改不了（SMTP 授权码、发件邮箱、收款账号都在此列）。
+   其余项（报销标准、字典、注册策略等）是全局共享，只有管理员能改。 */
+const USER_SETTINGS = new Set([
+  'mail_to', 'mail_from', 'mail_from_name',
+  'mail_smtp_host', 'mail_smtp_port', 'mail_smtp_secure', 'mail_smtp_user', 'mail_smtp_pass',
+  'payee_name', 'payee_bank', 'payee_account',
+]);
+const isUserSetting = (key) => USER_SETTINGS.has(key);
+
+/* 用户级项里的「身份敏感」子集：全局值绝不下发给个人。
+   系统发验证码用的 SMTP 配置必须留在全局（auth.js 没有用户上下文），
+   但那套发件账号/授权码不能被其他用户在设置页看到，所以这里不回退全局。
+   mail_to（发票归集邮箱）与 host/port/secure 是公共默认值，允许回退。 */
+const NO_GLOBAL_FALLBACK = new Set([
+  'mail_from', 'mail_from_name', 'mail_smtp_user', 'mail_smtp_pass',
+  'payee_name', 'payee_bank', 'payee_account',
+]);
+/** 写入范围：只有用户级项 + 明确的用户才写个人行，其余一律全局（user_id=0） */
+function settingScope(key, userId) {
+  return (userId && isUserSetting(key)) ? Number(userId) : 0;
+}
+
+function getSetting(key, userId = 0) {
+  const uid = settingScope(key, userId);
+  if (uid) {
+    const mine = db.prepare('SELECT value FROM settings WHERE key = ? AND user_id = ?').get(key, uid);
+    if (mine) return mine.value;
+    if (NO_GLOBAL_FALLBACK.has(key)) return DEFAULT_SETTINGS[key];
+  }
+  const row = db.prepare('SELECT value FROM settings WHERE key = ? AND user_id = 0').get(key);
   return row ? row.value : DEFAULT_SETTINGS[key];
 }
-function setSetting(key, value) {
+function setSetting(key, value, userId = 0) {
+  const uid = settingScope(key, userId);
   db.prepare(
-    'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-  ).run(key, String(value));
+    `INSERT INTO settings(key,user_id,value) VALUES(?,?,?)
+     ON CONFLICT(key,user_id) DO UPDATE SET value = excluded.value`
+  ).run(key, uid, String(value));
 }
 /** 数值型设置项（餐费/交通/系数等），读取时转为 Number */
 const NUMERIC_SETTINGS = new Set([
   'meal_teacher', 'city_teacher', 'student_ratio', 'travel_day_free_meal',
 ]);
 
-function getAllSettings() {
+/** 全局设置 + 该用户的个人覆盖（userId=0 时只返回全局） */
+function getAllSettings(userId = 0) {
   const out = { ...DEFAULT_SETTINGS };
-  for (const r of db.prepare('SELECT key,value FROM settings').all()) {
-    out[r.key] = NUMERIC_SETTINGS.has(r.key) ? (Number(r.value) || 0) : r.value;
+  const conv = (r) => (NUMERIC_SETTINGS.has(r.key) ? (Number(r.value) || 0) : r.value);
+  for (const r of db.prepare('SELECT key,value FROM settings WHERE user_id = 0').all()) out[r.key] = conv(r);
+  if (userId) {
+    // 先看有没有个人配置：有则覆盖，没有则身份敏感项回落到出厂默认值（不继承全局）
+    const mine = db.prepare('SELECT key,value FROM settings WHERE user_id = ?').all(Number(userId));
+    const owned = new Set(mine.map((r) => r.key));
+    for (const k of NO_GLOBAL_FALLBACK) if (!owned.has(k)) out[k] = DEFAULT_SETTINGS[k] ?? '';
+    for (const r of mine) out[r.key] = conv(r);
   }
   return out;
 }
@@ -353,6 +418,9 @@ module.exports = {
   EXPORT_DIR,
   DEFAULT_SETTINGS,
   SECRET_SETTINGS,
+  USER_SETTINGS,
+  NO_GLOBAL_FALLBACK,
+  isUserSetting,
   getSetting,
   setSetting,
   getAllSettings,

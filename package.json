@@ -11,6 +11,8 @@
     "test": "node server/smoke.js",
     "test:auth": "node server/auth_smoke.js",
     "test:ui": "node server/ui_smoke.js",
+    "test:isolation": "node server/isolation_test.js",
+    "test:mail": "node server/mail_e2e.js",
     "check:ids": "node server/idcheck.js",
     "verify:export": "python server/verify_exports.py",
     "migrate:export": "node deploy/migrate/export-bundle.js",

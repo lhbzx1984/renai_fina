@@ -87,7 +87,9 @@
       <!-- ========== 设置 ========== -->
       <section class="view" id="view-settings">
         <div class="card">
-          <div class="card-head"><h3>差旅补助标准</h3></div>
+          <div class="card-head"><h3>差旅补助标准</h3><span class="spacer"></span><span class="tag tag-global" id="tagGlobalStd">全校统一</span></div>
+          <div class="card-body">
+            <div class="hint" id="globalLockHint" style="margin-bottom:8px"></div>
           <div class="card-body">
             <div class="grid grid-3">
               <div class="field">
@@ -110,20 +112,27 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>单位与收款信息</h3></div>
+          <div class="card-head"><h3>单位信息</h3><span class="spacer"></span><span class="tag tag-global">全校统一</span></div>
           <div class="card-body">
             <div class="grid grid-2">
               <div class="field"><label>单位名称</label><input class="input" id="set_org_name"></div>
               <div class="field"><label>货币前缀</label><input class="input" id="set_currency_prefix"></div>
-              <div class="field"><label>收款单位名称</label><input class="input" id="set_payee_name" placeholder="留空则用单位名称"></div>
-              <div class="field"><label>开户银行</label><input class="input" id="set_payee_bank"></div>
-              <div class="field"><label>银行账号</label><input class="input" id="set_payee_account"></div>
             </div>
-            <button class="btn btn-primary" id="btnSaveSettings">保存设置</button>
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>发票邮件发送</h3><span class="spacer"></span><span class="hint" id="mailStatusHint"></span></div>
+          <div class="card-head"><h3>我的收款与发票邮箱</h3><span class="spacer"></span><span class="tag tag-mine">仅本人可见</span></div>
+          <div class="card-body">
+            <div class="grid grid-2">
+              <div class="field"><label>收款人姓名</label><input class="input" id="set_payee_name" placeholder="留空则用单位名称"></div>
+              <div class="field"><label>开户银行</label><input class="input" id="set_payee_bank"></div>
+              <div class="field"><label>银行账号</label><input class="input" id="set_payee_account"></div>
+            </div>
+            <div style="margin-top:8px"><button class="btn btn-primary" id="btnSaveSettings">保存设置</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>发票邮件发送</h3><span class="spacer"></span><span class="tag tag-mine">仅本人可见</span><span class="hint" id="mailStatusHint"></span></div>
           <div class="card-body">
             <div class="grid grid-2">
               <div class="field">

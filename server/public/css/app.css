@@ -247,6 +247,10 @@ table.tb tfoot td { background: #f7f9fb; font-weight: 700; border-top: 2px solid
 .tag.red { background: #fbeae8; color: var(--err); }
 .tag.gray { background: #eef1f4; color: var(--ink-2); }
 .tag.purple { background: #f0ebfa; color: #6b4bb8; }
+/* 设置项作用域：全校统一 = 管理员维护；仅本人可见 = 每个用户一份 */
+.tag.tag-global { background: #eef1f4; color: var(--ink-2); }
+.tag.tag-mine { background: #e6f5ed; color: var(--ok); }
+.input:disabled { background: #f4f6f8; color: var(--ink-3); cursor: not-allowed; }
 
 /* ============ 空态 ============ */
 .empty { padding: 52px 20px; text-align: center; color: var(--ink-3); }

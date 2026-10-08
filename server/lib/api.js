@@ -2,7 +2,11 @@
 /** 业务 API 处理：全部返回 {ok, data} 或 {ok:false, error} */
 const fs = require('node:fs');
 const path = require('node:path');
-const { db, getSetting, getAllSettings, setSetting, DEFAULT_SETTINGS, SECRET_SETTINGS, UPLOAD_DIR, EXPORT_DIR } = require('./db');
+const {
+  db, getSetting, getAllSettings, setSetting, DEFAULT_SETTINGS, SECRET_SETTINGS,
+  USER_SETTINGS, isUserSetting, UPLOAD_DIR, EXPORT_DIR,
+} = require('./db');
+const USER_SETTINGS_LIST = [...USER_SETTINGS];
 const { round2, rmbUpper } = require('./money');
 const { computeProject, calcDays, cnDate } = require('./calc');
 const { buildTravelDocx } = require('./docx');
@@ -50,6 +54,52 @@ const CATEGORY_CODE_PREFIX = {
 
 const bad = (msg) => ({ ok: false, error: String(msg) });
 const good = (data) => ({ ok: true, data });
+
+/* ============ 数据归属隔离 ============
+ * 每个项目属于创建它的用户（projects.owner_user_id）：
+ *   - 普通用户：只能看/改/删自己的项目及其行程、成员、票据、导出件；
+ *   - 管理员（admin / super_admin）：可看全部，便于后台运维与审计；
+ *   - 未开启登录（user = null）：沿用旧的单机共享模式，不过滤。
+ * 归属校验放在每个业务函数入口，而不是只在列表接口过滤 ——
+ * 只过滤列表的话，对方拿一个 id 直接调详情/修改/删除接口照样能改到别人的数据。 */
+const ADMIN_ROLES = new Set(['admin', 'super_admin']);
+const isAdmin = (user) => !!user && ADMIN_ROLES.has(user.role);
+const DENIED = '项目不存在或无权访问';
+
+/** 主体是否有权访问某项目 */
+function canAccessProject(projectId, user) {
+  if (!user) return true;                       // 未启用登录 = 共享模式
+  if (isAdmin(user)) return true;
+  return !!db.prepare('SELECT 1 FROM projects WHERE id=? AND owner_user_id=?')
+    .get(projectId, user.id);
+}
+/** 取「有权访问」的项目；无权或不存在返回 null */
+function ownProject(id, user) {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(id);
+  if (!p) return null;
+  if (user && !isAdmin(user) && p.owner_user_id !== user.id) return null;
+  return p;
+}
+/** 按子资源（行程/成员/票据）id 反查所属项目并校验归属 */
+function ownByRow(row, user) {
+  if (!row) return '记录不存在';
+  return canAccessProject(row.project_id, user) ? null : DENIED;
+}
+/** 列表查询的归属条件：管理员不加限制，普通用户只查自己的 */
+function ownerWhere(user) {
+  if (!user) return { sql: '', args: [] };
+  if (isAdmin(user)) return { sql: '', args: [] };
+  return { sql: ' AND p.owner_user_id = ?', args: [user.id] };
+}
+
+/** 票据原件下载鉴权：不在任何项目里的文件、或属于他人项目的文件一律拒绝 */
+function canAccessFile(name, user) {
+  if (!user) return true;                       // 未启用登录 = 共享模式
+  const rows = db.prepare('SELECT project_id FROM receipts WHERE file_path = ?').all(name);
+  if (!rows.length) return false;
+  if (isAdmin(user)) return true;
+  return rows.some((r) => canAccessProject(r.project_id, user));
+}
 
 /* ============ 字典：内置 + 自定义 ============
  * 自定义项以 JSON 数组存在 settings 表（custom_categories / custom_buckets），
@@ -104,46 +154,56 @@ function deleteDictItem(kind, key) {
 }
 
 /* ============ 设置 ============ */
-/** 下发到浏览器的设置：密钥类不出现在响应里，只给「是否已配置」布尔值 */
-function publicSettings() {
-  const s = getAllSettings();
+/** 下发到浏览器的设置：密钥类不出现在响应里，只给「是否已配置」布尔值。
+ *  传 user 时返回「全局 + 该用户个人覆盖」，个人项不会带回别人的值。 */
+function publicSettings(user) {
+  const s = getAllSettings(user ? user.id : 0);
   for (const k of SECRET_SETTINGS) {
     s[k + '_set'] = !!s[k];
     s[k] = '';
   }
   // 兼容旧前端：SMTP 授权码的布尔标志名不变
-  s.mail_smtp_pass_set = !!getAllSettings().mail_smtp_pass;
+  s.mail_smtp_pass_set = !!getAllSettings(user ? user.id : 0).mail_smtp_pass;
   return s;
 }
 
-function getSettings() {
+function getSettings(user) {
   return good({
-    settings: publicSettings(), defaults: DEFAULT_SETTINGS,
+    settings: publicSettings(user), defaults: DEFAULT_SETTINGS,
     categories: allCategories(), buckets: allBuckets(),
+    // 前端据此禁用全局项输入：普通用户只能改自己的邮件/收款设置
+    can_edit_global: !user || isAdmin(user),
+    scope: {
+      user: USER_SETTINGS_LIST,
+      global_locked: !!(user && !isAdmin(user)),
+    },
   });
 }
-function updateSettings(body) {
+function updateSettings(body, user) {
   const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), 'payee_bank', 'payee_account', 'payee_name']);
+  const uid = user ? user.id : 0;
   let n = 0;
   for (const [k, v] of Object.entries(body || {})) {
     if (!allowed.has(k)) continue;
+    // 全局项（报销标准、注册策略等）只有管理员能改；普通用户提交则跳过，不报错
+    if (!isUserSetting(k) && !isAdmin(user)) continue;
     // 密钥前端拿不到明文：空串/掩码=不修改，__CLEAR__=清除
     if (SECRET_SETTINGS.includes(k)) {
       const sv = String(v);
       if (sv === '' || /^•+$/.test(sv)) continue;
-      if (sv === '__CLEAR__') { setSetting(k, ''); n++; continue; }
+      if (sv === '__CLEAR__') { setSetting(k, '', uid); n++; continue; }
     }
     if (k.startsWith('meal_') || k.startsWith('city_') || k === 'student_ratio' || k === 'travel_day_free_meal') {
       const num = Number(v);
       if (Number.isNaN(num) || num < 0) continue;
-      setSetting(k, num);
+      setSetting(k, num, uid);
     } else {
-      setSetting(k, String(v).slice(0, 200));
+      setSetting(k, String(v).slice(0, 200), uid);
     }
     n++;
   }
   if (n === 0) return bad('没有可更新的设置项');
-  return good({ settings: publicSettings() });
+  return good({ settings: publicSettings(user) });
 }
 
 /* ============ 账号体系（供前端决定渲染什么） ============ */
@@ -169,9 +229,9 @@ function authConfig() {
 }
 
 /* ============ 发票邮件发送 ============ */
-/** 读取邮件配置并校验完整性 */
-function mailConfig() {
-  const s = getAllSettings();
+/** 读取邮件配置并校验完整性。传 user 时读该用户的个人配置（含授权码） */
+function mailConfig(user) {
+  const s = getAllSettings(user ? user.id : 0);
   const missing = [];
   if (!s.mail_to) missing.push('收件人邮箱');
   if (!s.mail_from) missing.push('发件人邮箱');
@@ -190,8 +250,8 @@ function mailConfig() {
   };
 }
 
-function mailStatus() {
-  const c = mailConfig();
+function mailStatus(user) {
+  const c = mailConfig(user);
   return good({
     configured: c.ok,
     missing: c.missing,
@@ -218,10 +278,10 @@ function projectPdfReceipts(projectId, onlyApproved) {
 }
 
 /** 把项目全部 PDF 发票逐张作为附件发到指定邮箱 */
-async function sendProjectInvoices(projectId, body = {}) {
-  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
-  if (!p) return bad('项目不存在');
-  const c = mailConfig();
+async function sendProjectInvoices(projectId, body = {}, user = null) {
+  const p = ownProject(projectId, user);
+  if (!p) return bad(DENIED);
+  const c = mailConfig(user);
   if (!c.ok) return bad('邮件还没配置好，缺：' + c.missing.join('、') + '（到「设置 → 发票邮件发送」填写）');
 
   const onlyApproved = body.onlyApproved !== false; // 默认只发已审核通过的票据
@@ -274,8 +334,8 @@ async function sendProjectInvoices(projectId, body = {}) {
 }
 
 /** 发一封无附件的测试邮件，用来验证 SMTP 配置是否可用 */
-async function sendTestMail(body = {}) {
-  const c = mailConfig();
+async function sendTestMail(body = {}, user = null) {
+  const c = mailConfig(user);
   if (!c.ok) return bad('邮件还没配置好，缺：' + c.missing.join('、'));
   const to = String((body && body.to) || c.to).trim();
   try {
@@ -376,8 +436,9 @@ function decorateProject(p) {
   };
 }
 
-function listProjects(query = {}) {
-  const rows = db.prepare('SELECT * FROM projects ORDER BY updated_at DESC, id DESC').all();
+function listProjects(query = {}, user = null) {
+  const { sql, args } = ownerWhere(user);
+  const rows = db.prepare(`SELECT p.* FROM projects p WHERE 1=1${sql} ORDER BY p.updated_at DESC, p.id DESC`).all(...args);
   let list = rows.map(decorateProject);
   if (query.category) list = list.filter((p) => p.category === query.category);
   if (query.q) {
@@ -389,10 +450,10 @@ function listProjects(query = {}) {
   return good({ projects: list });
 }
 
-function getProject(id) {
-  const p = decorateProject(db.prepare('SELECT * FROM projects WHERE id=?').get(id));
-  if (!p) return bad('项目不存在');
-  const cfg = getAllSettings();
+function getProject(id, user = null) {
+  const p = decorateProject(ownProject(id, user));
+  if (!p) return bad(DENIED);
+  const cfg = getAllSettings(user ? user.id : 0);
   const trips = db.prepare('SELECT * FROM trips WHERE project_id=? ORDER BY start_date, id').all(id)
     .map((t) => ({ ...t, member_ids_parsed: parseMemberIds(t.member_ids) }));
   const members = db.prepare('SELECT * FROM members WHERE project_id=? ORDER BY role DESC, id').all(id)
@@ -427,19 +488,20 @@ function getProject(id) {
   });
 }
 
-function createProject(body) {
+function createProject(body, user = null) {
   const b = body || {};
   if (!b.name || !String(b.name).trim()) return bad('项目名称不能为空');
   const code = String(b.code || '').trim() || autoCode(b.category);
   if (db.prepare('SELECT id FROM projects WHERE code=?').get(code)) return bad(`项目编号「${code}」已存在`);
   const r = db.prepare(`INSERT INTO projects
-    (code,name,category,period_id,college_id,major_id,leader,has_travel,reason,budget,status,remark)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
+    (code,name,category,period_id,college_id,major_id,leader,has_travel,reason,budget,status,remark,owner_user_id)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(
       code, String(b.name).trim(), b.category || 'research',
       b.period_id || null, b.college_id || null, b.major_id || null,
       b.leader || null, b.has_travel ? 1 : 0, b.reason || null,
-      Number(b.budget) || 0, b.status || 'draft', b.remark || null
+      Number(b.budget) || 0, b.status || 'draft', b.remark || null,
+      user ? user.id : null
     );
   return good({ id: r.lastInsertRowid, code });
 }
@@ -459,9 +521,9 @@ function autoCode(category) {
   return `${prefix}-${year}-${String(n).padStart(3, '0')}`;
 }
 
-function updateProject(id, body) {
-  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(id);
-  if (!p) return bad('项目不存在');
+function updateProject(id, body, user = null) {
+  const p = ownProject(id, user);
+  if (!p) return bad(DENIED);
   const b = body || {};
   db.prepare(`UPDATE projects SET name=?,category=?,period_id=?,college_id=?,major_id=?,
     leader=?,has_travel=?,reason=?,budget=?,status=?,remark=?,updated_at=datetime('now','localtime') WHERE id=?`)
@@ -475,7 +537,8 @@ function updateProject(id, body) {
   return good({ id });
 }
 
-function deleteProject(id) {
+function deleteProject(id, user = null) {
+  if (!ownProject(id, user)) return bad(DENIED);
   // 级联只删数据库记录，磁盘上的票据文件需在此清理，避免孤儿文件堆积
   for (const r of db.prepare('SELECT file_path FROM receipts WHERE project_id=?').all(id)) {
     if (!r.file_path) continue;
@@ -503,9 +566,9 @@ function parseMemberIds(v) {
   try { const a = JSON.parse(v); return Array.isArray(a) ? a.map(Number) : []; } catch (e) { return []; }
 }
 
-function createTrip(projectId, body) {
-  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
-  if (!p) return bad('项目不存在');
+function createTrip(projectId, body, user = null) {
+  const p = ownProject(projectId, user);
+  if (!p) return bad(DENIED);
   const days = calcDays(body.start_date, body.end_date);
   const r = db.prepare('INSERT INTO trips(project_id,reason,start_date,end_date,from_place,to_place,days,member_ids) VALUES(?,?,?,?,?,?,?,?)')
     .run(projectId, body.reason || null, body.start_date || null, body.end_date || null,
@@ -517,9 +580,10 @@ function createTrip(projectId, body) {
   }
   return good({ id: r.lastInsertRowid, days });
 }
-function updateTrip(id, body) {
+function updateTrip(id, body, user = null) {
   const t = db.prepare('SELECT * FROM trips WHERE id=?').get(id);
-  if (!t) return bad('行程不存在');
+  const err = ownByRow(t, user);
+  if (err) return bad(err);
   const days = calcDays(body.start_date ?? t.start_date, body.end_date ?? t.end_date);
   const memberIds = body.member_ids !== undefined
     ? serializeMemberIds(body.member_ids, t.project_id)
@@ -529,16 +593,23 @@ function updateTrip(id, body) {
       body.from_place ?? t.from_place, body.to_place ?? t.to_place, days, memberIds, id);
   return good({ id, days });
 }
-function deleteTrip(id) { db.prepare('DELETE FROM trips WHERE id=?').run(id); return good({ id }); }
+function deleteTrip(id, user = null) {
+  const t = db.prepare('SELECT * FROM trips WHERE id=?').get(id);
+  const err = ownByRow(t, user);
+  if (err) return bad(err);
+  db.prepare('DELETE FROM trips WHERE id=?').run(id);
+  return good({ id });
+}
 
 /* ============ 成员 ============ */
-function listMembers(projectId) {
+function listMembers(projectId, user = null) {
+  if (!ownProject(projectId, user)) return bad(DENIED);
   const rows = db.prepare('SELECT * FROM members WHERE project_id=? ORDER BY role DESC, id').all(projectId);
   return good({ members: rows });
 }
-function createMember(projectId, body) {
-  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
-  if (!p) return bad('项目不存在');
+function createMember(projectId, body, user = null) {
+  const p = ownProject(projectId, user);
+  if (!p) return bad(DENIED);
   if (!body.name || !String(body.name).trim()) return bad('姓名不能为空');
   const role = body.role === 'student' ? 'student' : 'teacher';
   let days = Number(body.days) || 0;
@@ -559,9 +630,10 @@ function createMember(projectId, body) {
       days, body.remark || null);
   return good({ id: r.lastInsertRowid });
 }
-function updateMember(id, body) {
+function updateMember(id, body, user = null) {
   const m = db.prepare('SELECT * FROM members WHERE id=?').get(id);
-  if (!m) return bad('成员不存在');
+  const err = ownByRow(m, user);
+  if (err) return bad(err);
   db.prepare(`UPDATE members SET name=?,major=?,job_no=?,phone=?,rank_level=?,
     meal_rate=?,city_rate=?,days=?,remark=?,role=? WHERE id=?`)
     .run(body.name ?? m.name, body.major ?? m.major, body.job_no ?? m.job_no,
@@ -572,17 +644,29 @@ function updateMember(id, body) {
       body.remark ?? m.remark, body.role ?? m.role, id);
   return good({ id });
 }
-function deleteMember(id) { db.prepare('DELETE FROM members WHERE id=?').run(id); return good({ id }); }
+function deleteMember(id, user = null) {
+  const m = db.prepare('SELECT * FROM members WHERE id=?').get(id);
+  const err = ownByRow(m, user);
+  if (err) return bad(err);
+  db.prepare('DELETE FROM members WHERE id=?').run(id);
+  return good({ id });
+}
 
-/** 从全校字典快速匹配教师/学生（按姓名 + 工号/学号） */
-function searchPeople(name, jobNo) {
-  const rows = db.prepare('SELECT * FROM members WHERE name LIKE ? ORDER BY id DESC LIMIT 50').all(`%${name}%`);
+/** 从历史人员里快速匹配教师/学生（按姓名 + 工号/学号）。
+ *  只搜自己项目里出现过的人 —— 否则能通过姓名反查到别人的成员信息。 */
+function searchPeople(name, jobNo, user = null) {
+  const { sql, args } = ownerWhere(user);
+  const rows = db.prepare(
+    `SELECT m.* FROM members m JOIN projects p ON p.id = m.project_id
+     WHERE m.name LIKE ?${sql} ORDER BY m.id DESC LIMIT 50`
+  ).all(`%${name}%`, ...args);
   const filtered = jobNo ? rows.filter((r) => String(r.job_no || '').includes(jobNo)) : rows;
   return good({ people: filtered });
 }
 
 /* ============ 票据 ============ */
-function listReceipts(projectId, status) {
+function listReceipts(projectId, status, user = null) {
+  if (!ownProject(projectId, user)) return bad(DENIED);
   let sql = 'SELECT * FROM receipts WHERE project_id=?';
   const args = [projectId];
   if (status && status !== 'all') { sql += ' AND ocr_status=?'; args.push(status); }
@@ -592,9 +676,8 @@ function listReceipts(projectId, status) {
   return good({ receipts: rows });
 }
 
-function createReceipt(projectId, body) {
-  const p = db.prepare('SELECT id FROM projects WHERE id=?').get(projectId);
-  if (!p) return bad('项目不存在');
+function createReceipt(projectId, body, user = null) {
+  if (!ownProject(projectId, user)) return bad(DENIED);
   const r = db.prepare(`INSERT INTO receipts
     (project_id,member_id,category,file_name,mime,size,invoice_no,invoice_date,vendor,amount,tax_no,itinerary,ocr_status)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -606,9 +689,8 @@ function createReceipt(projectId, body) {
   return good({ id: r.lastInsertRowid });
 }
 
-async function uploadReceipts(projectId, files, hints) {
-  const p = db.prepare('SELECT id FROM projects WHERE id=?').get(projectId);
-  if (!p) return bad('项目不存在');
+async function uploadReceipts(projectId, files, hints, user = null) {
+  if (!ownProject(projectId, user)) return bad(DENIED);
   const created = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
@@ -636,9 +718,10 @@ async function uploadReceipts(projectId, files, hints) {
   return good({ created, message: `已上传 ${created.length} 张票据，等待人工审核` });
 }
 
-function updateReceipt(id, body) {
+function updateReceipt(id, body, user = null) {
   const r = db.prepare('SELECT * FROM receipts WHERE id=?').get(id);
-  if (!r) return bad('票据不存在');
+  const err = ownByRow(r, user);
+  if (err) return bad(err);
   db.prepare(`UPDATE receipts SET member_id=?,category=?,invoice_no=?,invoice_date=?,
     vendor=?,amount=?,tax_no=?,itinerary=?,updated_at=datetime('now','localtime') WHERE id=?`)
     .run(body.member_id ?? r.member_id, body.category ?? r.category,
@@ -650,9 +733,10 @@ function updateReceipt(id, body) {
 }
 
 /** 重新识别：对待审核票据用最新 OCR 逻辑重跑原始文件并回填字段 */
-async function reocrReceipt(id) {
+async function reocrReceipt(id, user = null) {
   const r = db.prepare('SELECT * FROM receipts WHERE id=?').get(id);
-  if (!r) return bad('票据不存在');
+  const err = ownByRow(r, user);
+  if (err) return bad(err);
   if (r.ocr_status !== 'pending') return bad('仅待审核票据可重新识别（已审核的请先撤销通过）');
   const fp = r.file_path ? path.join(UPLOAD_DIR, path.basename(r.file_path)) : '';
   if (!fp || !fs.existsSync(fp)) return bad('原始文件已丢失，无法重新识别');
@@ -706,10 +790,11 @@ function normalizeBucket(v, ctx) {
     `${ctx.vendor || ''} ${ctx.itinerary || ''} ${s}`);
 }
 
-function listAiQueue() {
+function listAiQueue(user = null) {
+  const { sql, args } = ownerWhere(user);
   const rows = db.prepare(`SELECT r.*, p.name AS project_name, p.code AS project_code
     FROM receipts r LEFT JOIN projects p ON p.id = r.project_id
-    WHERE r.ai_status = 'queued' ORDER BY r.id`).all();
+    WHERE r.ai_status = 'queued'${sql} ORDER BY r.id`).all(...args);
   const queue = rows.map((r) => {
     const abs = receiptAbsPath(r);
     return {
@@ -732,9 +817,10 @@ function listAiQueue() {
   return good({ count: queue.length, queue });
 }
 
-function applyAiFields(id, body) {
+function applyAiFields(id, body, user = null) {
   const r = db.prepare('SELECT * FROM receipts WHERE id=?').get(id);
-  if (!r) return bad('票据不存在');
+  const err = ownByRow(r, user);
+  if (err) return bad(err);
   const src = (body && body.fields) || body || {};
   const force = !!(body && body.force);
   const updated = {};
@@ -772,8 +858,12 @@ function applyAiFields(id, body) {
   let duplicate = null;
   const no = r.invoice_no ? String(r.invoice_no).trim() : '';
   if (no) {
-    const others = db.prepare('SELECT id,project_id,file_name,amount,invoice_date FROM receipts WHERE invoice_no=? AND id<>?')
-      .all(no, id);
+    // 查重只在自己的项目范围内做：跨用户查会把别人的票据信息带进响应
+    const { sql, args } = ownerWhere(user);
+    const others = db.prepare(
+      `SELECT r.id,r.project_id,r.file_name,r.amount,r.invoice_date FROM receipts r
+       JOIN projects p ON p.id = r.project_id
+       WHERE r.invoice_no=? AND r.id<>?${sql}`).all(no, id, ...args);
     if (others.length) {
       duplicate = others.map((o) => ({ id: o.id, project_id: o.project_id, file_name: o.file_name, amount: o.amount, invoice_date: o.invoice_date }));
     }
@@ -809,17 +899,19 @@ function applyAiFields(id, body) {
 }
 
 /** 放弃 AI 提取（AI 也看不清 / 非发票） */
-function skipAiReceipt(id, body) {
-  const r = db.prepare('SELECT id FROM receipts WHERE id=?').get(id);
-  if (!r) return bad('票据不存在');
+function skipAiReceipt(id, body, user = null) {
+  const r = db.prepare('SELECT id, project_id FROM receipts WHERE id=?').get(id);
+  const err = ownByRow(r, user);
+  if (err) return bad(err);
   db.prepare(`UPDATE receipts SET ai_status='skipped', ai_at=datetime('now','localtime'),
     updated_at=datetime('now','localtime') WHERE id=?`).run(id);
   return good({ id, message: '已标记为无需 AI 提取，请人工录入', reason: (body && body.reason) || '' });
 }
 
-function reviewReceipt(id, body) {
+function reviewReceipt(id, body, user = null) {
   const r = db.prepare('SELECT * FROM receipts WHERE id=?').get(id);
-  if (!r) return bad('票据不存在');
+  const err = ownByRow(r, user);
+  if (err) return bad(err);
   const status = body.status;
   if (!['approved', 'rejected', 'pending'].includes(status)) return bad('审核状态非法');
   const reviewer = body.reviewer || '财务审核';
@@ -851,8 +943,10 @@ function reviewReceipt(id, body) {
   return good({ id, status, items });
 }
 
-function deleteReceipt(id) {
+function deleteReceipt(id, user = null) {
   const r = db.prepare('SELECT * FROM receipts WHERE id=?').get(id);
+  const err = ownByRow(r, user);
+  if (err) return bad(err);
   if (r && r.file_path) {
     const fp = path.join(UPLOAD_DIR, path.basename(r.file_path));
     if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch (_) { /* 忽略 */ } }
@@ -862,7 +956,8 @@ function deleteReceipt(id) {
 }
 
 /** 批量导入票据（CSV 文本 / JSON 数组） */
-function importReceipts(projectId, payload, format) {
+function importReceipts(projectId, payload, format, user = null) {
+  if (!ownProject(projectId, user)) return bad(DENIED);
   let list = [];
   if (format === 'json') {
     try { list = Array.isArray(payload) ? payload : JSON.parse(payload); }
@@ -934,8 +1029,8 @@ function receiptTemplate() {
 }
 
 /* ============ 报表导出 ============ */
-function buildTravelPayload(projectId) {
-  const detail = getProject(projectId);
+function buildTravelPayload(projectId, user = null) {
+  const detail = getProject(projectId, user);
   if (!detail.ok) return detail;
   const { project, trips, calc, members } = detail.data;
   const t = trips[0] || null;
@@ -961,8 +1056,8 @@ function buildTravelPayload(projectId) {
   });
 }
 
-function exportTravelDocx(projectId) {
-  const payload = buildTravelPayload(projectId);
+function exportTravelDocx(projectId, user = null) {
+  const payload = buildTravelPayload(projectId, user);
   if (!payload.ok) return payload;
   const buf = buildTravelDocx(payload.data);
   const name = `${payload.data.project.code}_差旅费报销明细表.docx`;
@@ -976,11 +1071,11 @@ function exportTravelDocx(projectId) {
   });
 }
 
-function exportFundXlsx(projectId, body) {
-  const detail = getProject(projectId);
+function exportFundXlsx(projectId, body, user = null) {
+  const detail = getProject(projectId, user);
   if (!detail.ok) return detail;
   const { project, calc } = detail.data;
-  const cfg = getAllSettings();
+  const cfg = getAllSettings(user ? user.id : 0);
   const today = new Date();
   const dateText = `${today.getFullYear()} 年 ${today.getMonth() + 1} 月 ${today.getDate()} 日`;
   const buf = buildFundXlsx({
@@ -1009,7 +1104,8 @@ function exportFundXlsx(projectId, body) {
 }
 
 /* 取项目最近一次导出的文件信息（供 GET 下载路由使用）；无记录时回退到现场生成 */
-function lastExport(projectId, kind) {
+function lastExport(projectId, kind, user = null) {
+  if (!ownProject(projectId, user)) return bad(DENIED);
   const row = db.prepare(
     'SELECT * FROM exports WHERE project_id=? AND kind=? ORDER BY id DESC LIMIT 1'
   ).get(projectId, kind);
@@ -1021,21 +1117,25 @@ function lastExport(projectId, kind) {
       download: `/api/projects/${projectId}/export/${kind}`,
     });
   }
-  return kind === 'fund_xlsx' ? exportFundXlsx(projectId, {}) : exportTravelDocx(projectId);
+  return kind === 'fund_xlsx' ? exportFundXlsx(projectId, {}, user) : exportTravelDocx(projectId, user);
 }
 
 /* ============ 仪表盘 ============ */
-function dashboard() {
-  const cfg = getAllSettings();
+function dashboard(user = null) {
+  const cfg = getAllSettings(user ? user.id : 0);
+  // 统计口径与列表保持一致：普通用户只看自己的项目与票据
+  const own = ownerWhere(user).sql.replace('p.', '');   // 子查询里表别名是 projects 本身
+  const ownArg = user && !isAdmin(user) ? [user.id] : [];
   const stat = db.prepare(`SELECT
-      (SELECT COUNT(*) FROM projects) projects,
-      (SELECT COUNT(*) FROM projects WHERE status='draft') draft,
-      (SELECT COUNT(*) FROM members) members,
-      (SELECT COUNT(*) FROM receipts WHERE ocr_status='pending') pending,
-      (SELECT COUNT(*) FROM receipts) receipts,
-      (SELECT COALESCE(SUM(amount),0) FROM receipts WHERE ocr_status='approved') amount`).get();
-  const byCat = db.prepare('SELECT category, COUNT(*) n, COALESCE(SUM(budget),0) b FROM projects GROUP BY category').all();
-  const recent = db.prepare('SELECT * FROM projects ORDER BY updated_at DESC LIMIT 6').all().map(decorateProject);
+      (SELECT COUNT(*) FROM projects WHERE 1=1${own}) projects,
+      (SELECT COUNT(*) FROM projects WHERE status='draft'${own}) draft,
+      (SELECT COUNT(*) FROM members WHERE project_id IN (SELECT id FROM projects WHERE 1=1${own})) members,
+      (SELECT COUNT(*) FROM receipts WHERE ocr_status='pending' AND project_id IN (SELECT id FROM projects WHERE 1=1${own})) pending,
+      (SELECT COUNT(*) FROM receipts WHERE project_id IN (SELECT id FROM projects WHERE 1=1${own})) receipts,
+      (SELECT COALESCE(SUM(amount),0) FROM receipts WHERE ocr_status='approved' AND project_id IN (SELECT id FROM projects WHERE 1=1${own})) amount`)
+    .get(...ownArg, ...ownArg, ...ownArg, ...ownArg, ...ownArg, ...ownArg);
+  const byCat = db.prepare(`SELECT category, COUNT(*) n, COALESCE(SUM(budget),0) b FROM projects WHERE 1=1${own} GROUP BY category`).all(...ownArg);
+  const recent = db.prepare(`SELECT * FROM projects WHERE 1=1${own} ORDER BY updated_at DESC LIMIT 6`).all(...ownArg).map(decorateProject);
   const labels = Object.fromEntries(allCategories().map((c) => [c.key, c.label]));
   return good({
     settings: cfg,
@@ -1046,9 +1146,9 @@ function dashboard() {
 }
 
 /** 把某项目的全部 PDF 票据合并成一个 PDF（用于整项目一次性预览/打印） */
-function mergeReceiptsPdf(projectId) {
-  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
-  if (!p) return bad('项目不存在');
+function mergeReceiptsPdf(projectId, user = null) {
+  const p = ownProject(projectId, user);
+  if (!p) return bad(DENIED);
   const rows = db.prepare('SELECT * FROM receipts WHERE project_id=? ORDER BY id').all(projectId);
   const bufs = [];
   let skipped = 0;
@@ -1079,6 +1179,7 @@ function mergeReceiptsPdf(projectId) {
 }
 
 module.exports = {
+  canAccessFile, isAdmin,
   getSettings, updateSettings, requireLogin, authConfig,
   listPeriods, createPeriod, updatePeriod, deletePeriod,
   listColleges, createCollege, createMajor, updateCollege, deleteCollege, updateMajor, deleteMajor,
