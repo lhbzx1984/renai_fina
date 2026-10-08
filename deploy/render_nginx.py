@@ -7,15 +7,21 @@
   render_nginx.py <template> <domain> <输出路径> [--port 18080] [--no-https]
 
 两个关键行为：
-  --no-https  剔除整个 443 server 块，并把 HTTP 块里的 301 跳转换成反代。
-              原因：证书文件此时还不存在，保留该块会让 nginx -t 直接失败；
-              而没有 443 时下发 HSTS 或 301 会把用户永久卡死。
+  --no-https  无域名（裸 IP 签不了 Let's Encrypt）时的形态：剔除 certbot 的 443 块，
+              但对外端口仍以自签证书终结 TLS（listen ... ssl + /etc/nginx/ssl 自签证书）。
+              原因：纯 HTTP 形态会让浏览器自动升 https 的用户直接连不上；
+              自签证书浏览器会提示「不安全」，继续访问即可。
+              证书由 deploy.sh 在渲染前生成（openssl req -x509）。
   --port N    对外监听端口。独立端口部署（IP 直访）时传 18080 之类，
               域名部署时传 80（由 deploy.sh 自动决定）。
 """
 import argparse
 import os
 import sys
+
+# 自签证书路径（deploy.sh 负责在渲染前生成，render 只引用）
+SELF_SIGNED_CERT = '/etc/nginx/ssl/reimburse.crt'
+SELF_SIGNED_KEY = '/etc/nginx/ssl/reimburse.key'
 
 
 # HTTP 模式下替代「301 跳 HTTPS」的反代指令块
@@ -58,6 +64,24 @@ def strip_tls_block(s):
     return s[:start] + s[j:]
 
 
+def enable_self_signed_tls(s, port):
+    """HTTP 块原地升级为自签证书的 HTTPS：listen 加 ssl 并插入证书路径。"""
+    s = s.replace(f'listen {port};', f'listen {port} ssl;')
+    s = s.replace(f'listen [::]:{port};', f'listen [::]:{port} ssl;')
+    cert_lines = [
+        f'    ssl_certificate     {SELF_SIGNED_CERT};',
+        f'    ssl_certificate_key {SELF_SIGNED_KEY};',
+        '    ssl_protocols       TLSv1.2 TLSv1.3;',
+    ]
+    anchor = f'listen {port} ssl;'
+    idx = s.find(anchor)
+    if idx == -1:
+        return s
+    # 插到 listen 行行尾之后
+    end = s.find('\n', idx)
+    return s[:end + 1] + '\n'.join(cert_lines) + '\n' + s[end + 1:]
+
+
 def drop_ipv6_listen(s):
     """主机没有 IPv6 栈时去掉 listen [::]:... 行，否则 nginx 启动即失败。"""
     if os.path.exists('/proc/net/if_inet6'):
@@ -89,16 +113,17 @@ def main():
 
         out_lines = []
         for ln in s.splitlines():
-            # HTTP 模式下不能下发 HSTS：浏览器会缓存并强制后续访问走 HTTPS，
-            # 而此时根本没有 443，用户会被彻底卡死。
+            # 自签 HTTPS 形态也不下发 HSTS：一旦下发，浏览器会强制记住「仅 HTTPS」，
+            # 以后想把这套系统换回 HTTP 或换端口时会被卡死。
             if 'Strict-Transport-Security' in ln:
                 continue
-            # HTTP 模式下不能 301 跳 HTTPS（443 未监听，会陷入重定向循环）
+            # HTTP 模式下不能 301 跳 HTTPS（同端口已是 TLS，不需要也不应该跳）
             if 'return 301 https://' in ln:
                 out_lines.extend(PROXY_LINES)
                 continue
             out_lines.append(ln)
         s = '\n'.join(out_lines) + '\n'
+        s = enable_self_signed_tls(s, str(args.port))
 
     s = drop_ipv6_listen(s)
 
@@ -117,7 +142,7 @@ def main():
     with open(args.out, 'w', encoding='utf-8') as f:
         f.write(s)
 
-    mode = 'http' if args.no_https else 'https'
+    mode = 'self-signed-https' if args.no_https else 'https'
     print(f'nginx 配置已生成: {args.out} (domain={args.domain}, port={args.port}, mode={mode})')
     return 0
 

@@ -70,7 +70,7 @@ usage() {
                        建议指向挂载的数据盘，如 /data/reimburse
   --auth-user <用户名>  访问认证用户名，默认 admin
   --auth-pass <密码>    访问认证密码，不传则自动生成 20 位强随机
-  --no-https           只配 HTTP（IP 直访时自动启用）
+  --no-https           无域名形态：用自签证书终结 TLS（IP 直访时自动启用）
   --skip-nginx         不配置 Nginx（前面已有网关，如 SLB / ingress）
   --skip-firewall      不改动防火墙规则
   -h, --help           显示本帮助
@@ -423,6 +423,16 @@ if command -v nginx >/dev/null 2>&1; then
 
   RENDER_ARGS=(--port "$PUBLIC_PORT")
   [[ "$NO_HTTPS" == "1" ]] && RENDER_ARGS+=(--no-https)
+
+  # 无域名形态：渲染结果引用自签证书，先确保证书存在（幂等，已存在则复用）
+  if [[ "$NO_HTTPS" == "1" && ! -f /etc/nginx/ssl/reimburse.crt ]]; then
+    mkdir -p /etc/nginx/ssl
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout /etc/nginx/ssl/reimburse.key -out /etc/nginx/ssl/reimburse.crt \
+      -subj "/CN=reimburse" >/dev/null 2>&1 \
+      && c_ok "已生成自签证书 /etc/nginx/ssl/reimburse.crt（浏览器提示不安全属预期）" \
+      || c_warn "自签证书生成失败，https 将不可用；可手动执行 openssl req -x509 ..."
+  fi
 
   "$PY_BIN" "$SRC_DIR/deploy/render_nginx.py" \
     "$SRC_DIR/deploy/nginx.conf.template" "$NGX_SERVER_NAME" "$NGINX_CONF" "${RENDER_ARGS[@]}" \
