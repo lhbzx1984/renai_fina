@@ -84,9 +84,13 @@ head('1/6 打开目标库');
 if (!fs.existsSync(DB_PATH) && INIT) {
   info(`目标库不存在，尝试用 ${CODE_DIR} 初始化…`);
   const { spawnSync } = require('node:child_process');
+  if (!fs.existsSync(path.resolve(CODE_DIR, 'server', 'lib', 'db.js'))) {
+    die(`--code-dir 指向的不是项目目录，找不到 server/lib/db.js：${path.resolve(CODE_DIR)}`);
+  }
+  // 用 cwd + './' 前缀加载：绝对路径在非 ASCII 目录（含中文的项目路径）上 require 会解析失败
   const r = spawnSync(process.execPath,
-    ['-e', `process.env.DATA_DIR=${JSON.stringify(path.dirname(DB_PATH))};process.env.EXPORT_DIR=${JSON.stringify(EXPORT_DIR)};require(${JSON.stringify(path.join(CODE_DIR, 'server', 'lib', 'db.js'))});`],
-    { encoding: 'utf8' });
+    ['-e', `process.env.DATA_DIR=${JSON.stringify(path.dirname(DB_PATH))};process.env.EXPORT_DIR=${JSON.stringify(EXPORT_DIR)};require('./server/lib/db.js');`],
+    { cwd: path.resolve(CODE_DIR), encoding: 'utf8' });
   if (r.status !== 0) die('初始化失败：' + (r.stderr || r.stdout || '').slice(0, 400));
 }
 if (!fs.existsSync(DB_PATH)) {
