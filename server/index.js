@@ -437,7 +437,14 @@ const server = http.createServer(async (req, res) => {
   const AUTH_STRICT = process.env.AUTH_STRICT === '1';
   const basicBypass = pathname === '/api/health' ||
     (!AUTH_STRICT && (pathname.startsWith('/api/auth/') || !pathname.startsWith('/api/')));
-  if (!basicBypass && AUTH_ENABLED && !authOk(req)) return requireAuth(req, res);
+  if (!basicBypass && AUTH_ENABLED && !authOk(req)) {
+    /* 已持有有效会话（或机器 Bearer 令牌）的请求放行：
+       系统本身有完整的账号登录（会话+角色），Basic Auth 只是部署外壳。
+       浏览器的原生 Basic 弹窗无法被密码管理器自动填充，每次开页都弹一次，
+       体验极差；既然用户已通过系统登录，就不必再卡一道部署口令。
+       未登录的裸 API 访问仍然要过 Basic，防护面不缩水。 */
+    if (!auth.userFromRequest(req)) return requireAuth(req, res);
+  }
 
   if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
 
