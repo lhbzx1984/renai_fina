@@ -294,8 +294,8 @@ const DEFAULT_SETTINGS = {
   org_name: '天津仁爱学院',
   travel_day_free_meal: '0',// 免伙食补助天数（首末日等政策，预留）
   currency_prefix: '人民币',
-  // 发票邮件发送（收件人默认发票归集邮箱，可在设置页改）
-  mail_to: '13752070316@fapiao56.com',
+  // 发票邮件发送（收件人=各自的发票归集邮箱，逐人配置，出厂为空）
+  mail_to: '',
   mail_from: '',            // 发件人邮箱（网易 163 等）
   mail_from_name: '天津仁爱学院报销系统',
   mail_smtp_host: 'smtp.163.com',
@@ -331,9 +331,10 @@ const isUserSetting = (key) => USER_SETTINGS.has(key);
 /* 用户级项里的「身份敏感」子集：全局值绝不下发给个人。
    系统发验证码用的 SMTP 配置必须留在全局（auth.js 没有用户上下文），
    但那套发件账号/授权码不能被其他用户在设置页看到，所以这里不回退全局。
-   mail_to（发票归集邮箱）与 host/port/secure 是公共默认值，允许回退。 */
+   host/port/secure 是公共默认值，允许回退；mail_to 是各人的发票归集邮箱，
+   同样逐人配置，不回退（2026-10-08：曾因出厂默认带出某用户私人邮箱，已清空）。 */
 const NO_GLOBAL_FALLBACK = new Set([
-  'mail_from', 'mail_from_name', 'mail_smtp_user', 'mail_smtp_pass',
+  'mail_to', 'mail_from', 'mail_from_name', 'mail_smtp_user', 'mail_smtp_pass',
   'payee_name', 'payee_bank', 'payee_account',
 ]);
 /** 写入范围：只有用户级项 + 明确的用户才写个人行，其余一律全局（user_id=0） */

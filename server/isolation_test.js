@@ -141,12 +141,14 @@ function multipart(files) {
     /* ---------- 4. 设置隔离（邮箱 / 收款） ---------- */
     console.log('\n[4] 设置：全局共享 vs 个人私有');
     const setA = await call('PUT', '/api/settings',
-      { mail_from: 'iso_a@163.com', mail_smtp_user: 'iso_a@163.com', mail_smtp_pass: 'ISO-A-PASS', payee_name: '甲' }, cookieA);
+      { mail_to: 'iso_a_to@163.com', mail_from: 'iso_a@163.com', mail_smtp_user: 'iso_a@163.com', mail_smtp_pass: 'ISO-A-PASS', payee_name: '甲' }, cookieA);
     check('甲保存个人邮件设置', setA.json && setA.json.ok, setA.json);
     const getA = await call('GET', '/api/settings', undefined, cookieA);
     const getB = await call('GET', '/api/settings', undefined, cookieB);
     check('甲看得到自己的发件人', getA.json.data.settings.mail_from === 'iso_a@163.com', getA.json.data.settings.mail_from);
+    check('甲看得到自己的收件人', getA.json.data.settings.mail_to === 'iso_a_to@163.com', getA.json.data.settings.mail_to);
     check('乙看不到甲的发件人', getB.json.data.settings.mail_from !== 'iso_a@163.com', getB.json.data.settings.mail_from);
+    check('乙的收件人是空（不回退全局/出厂值）', getB.json.data.settings.mail_to === '', getB.json.data.settings.mail_to);
     check('授权码不下发明文', !getA.json.data.settings.mail_smtp_pass && getA.json.data.settings.mail_smtp_pass_set === true);
     check('乙的授权码是未配置（不继承全局）', getB.json.data.settings.mail_smtp_pass_set === false,
       getB.json.data.settings.mail_smtp_pass_set);
@@ -177,7 +179,7 @@ function multipart(files) {
     console.log('\n[清理]');
     if (rid) await call('DELETE', `/api/receipts/${rid}`, undefined, cookieA);
     await call('DELETE', `/api/projects/${pid}`, undefined, adminCookie);
-    for (const k of ['mail_from', 'mail_smtp_user', 'mail_smtp_pass', 'payee_name']) {
+    for (const k of ['mail_to', 'mail_from', 'mail_smtp_user', 'mail_smtp_pass', 'payee_name']) {
       db.prepare('DELETE FROM settings WHERE key=? AND user_id=?').run(k, idA);
     }
     const leftover = db.prepare('SELECT COUNT(*) n FROM projects WHERE name LIKE ?').get(`${TAG}%`).n;

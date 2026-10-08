@@ -332,8 +332,13 @@ async function run(){
 
     L('== 8.2 发票邮件发送（设置页）==');
     need(!!document.getElementById('set_mail_to'), '设置页含「发票邮件发送」收件人输入框');
-    need(document.getElementById('set_mail_to').value === '13752070316@fapiao56.com',
-      '收件人默认 13752070316@fapiao56.com，实际=' + document.getElementById('set_mail_to').value);
+    // 收件人邮箱已逐人配置（出厂为空、不回退全局），断言与接口下发一致而非具体值
+    {
+      const s0 = await (await fetch('/api/settings')).json();
+      const uiVal = document.getElementById('set_mail_to').value;
+      need(uiVal === (s0.data.settings.mail_to || ''),
+        '收件人输入框与接口下发一致，实际=' + uiVal + ' / api=' + s0.data.settings.mail_to);
+    }
     need(!!document.getElementById('btnTestMail') && !!document.getElementById('set_mail_smtp_pass'),
       '含测试邮件按钮与授权码输入框（type=' + document.getElementById('set_mail_smtp_pass').type + '）');
     need(document.getElementById('set_mail_smtp_pass').value === '', '授权码不回显明文');
