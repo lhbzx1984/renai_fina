@@ -261,6 +261,52 @@ function mailStatus(user) {
   });
 }
 
+/* ---------- 系统发件邮箱：注册 / 找回密码的验证码专用 ----------
+   验证码在 auth.js 里发出，那里没有用户上下文，只能读全局（user_id=0）配置。
+   而 mail_* 同时是用户级项（每人一份自己的发票邮箱），两者不是同一份，
+   所以必须由管理员单独配一次全局值，否则注册页会提示「验证码邮箱尚未配置」。 */
+function globalMailStatus() {
+  const s = getAllSettings(0);
+  const missing = [];
+  if (!s.mail_from) missing.push('发件人邮箱');
+  if (!s.mail_smtp_host) missing.push('SMTP 服务器');
+  if (!s.mail_smtp_user) missing.push('SMTP 账号');
+  if (!s.mail_smtp_pass) missing.push('SMTP 授权码');
+  return good({
+    ready: missing.length === 0, missing,
+    host: s.mail_smtp_host || '', port: Number(s.mail_smtp_port) || 465,
+    secure: String(s.mail_smtp_secure) !== '0',
+    user: s.mail_smtp_user || '', from: s.mail_from || '', fromName: s.mail_from_name || '',
+    passSet: !!s.mail_smtp_pass,
+  });
+}
+
+/** 只有管理员能写全局发件邮箱；授权码沿用掩码约定（空/掩码不覆盖，__CLEAR__ 清除） */
+function saveGlobalMail(body, user) {
+  if (!isAdmin(user)) return bad('只有管理员可以配置系统发件邮箱');
+  const map = {
+    smtp_host: 'mail_smtp_host', smtp_port: 'mail_smtp_port', smtp_secure: 'mail_smtp_secure',
+    smtp_user: 'mail_smtp_user', smtp_pass: 'mail_smtp_pass',
+    from: 'mail_from', from_name: 'mail_from_name',
+  };
+  let n = 0;
+  for (const [k, key] of Object.entries(map)) {
+    if (!Object.prototype.hasOwnProperty.call(body || {}, k)) continue;
+    let v = body[k];
+    if (k === 'smtp_pass') {
+      const sv = String(v);
+      if (sv === '' || /^•+$/.test(sv)) continue;
+      if (sv === '__CLEAR__') { setSetting(key, '', 0); n++; continue; }
+    }
+    if (k === 'smtp_secure') { v = (v === true || v === '1' || v === 1) ? '1' : '0'; }
+    if (k === 'smtp_port') { const p = Number(v); if (!Number.isFinite(p) || p <= 0) continue; v = String(p); }
+    setSetting(key, String(v).slice(0, 200), 0);
+    n++;
+  }
+  if (n === 0) return bad('没有可保存的配置项');
+  return globalMailStatus();
+}
+
 /** 列出某项目可作为附件发送的 PDF 票据 */
 function projectPdfReceipts(projectId, onlyApproved) {
   const rows = db.prepare('SELECT * FROM receipts WHERE project_id=? ORDER BY id').all(projectId);
@@ -334,6 +380,32 @@ async function sendProjectInvoices(projectId, body = {}, user = null) {
 }
 
 /** 发一封无附件的测试邮件，用来验证 SMTP 配置是否可用 */
+/** 用「系统发件邮箱」（全局配置）发一封测试邮件，验证验证码通道是否真的通 */
+async function sendGlobalTestMail(body = {}, user = null) {
+  if (!isAdmin(user)) return bad('只有管理员可以测试系统发件邮箱');
+  const to = String((body && body.to) || '').trim();
+  if (!to) return bad('请填写收件邮箱');
+  const c = mailConfig(null);
+  if (!c.ok) return bad('系统发件邮箱还没配好，缺：' + c.missing.join('、'));
+  try {
+    await sendMail(c.smtp, {
+      from: c.from, fromName: c.fromName || '天津仁爱学院报销系统',
+      to, subject: '【测试】系统发件邮箱（注册验证码通道）配置正常',
+      text: [
+        '收到这封邮件，说明新用户注册 / 找回密码的验证码可以正常发出。',
+        '',
+        `发件人：${c.from}`,
+        `SMTP：${c.smtp.host}:${c.smtp.port}${c.smtp.secure ? '（SSL）' : '（明文）'}`,
+        `时间：${new Date().toLocaleString('zh-CN')}`,
+      ].join('\n'),
+      attachments: [],
+    });
+    return good({ to });
+  } catch (e) {
+    return bad('测试发送失败：' + (e && e.message ? e.message : String(e)));
+  }
+}
+
 async function sendTestMail(body = {}, user = null) {
   const c = mailConfig(user);
   if (!c.ok) return bad('邮件还没配置好，缺：' + c.missing.join('、'));
@@ -1193,4 +1265,5 @@ module.exports = {
   addDictItem, deleteDictItem, allCategories, allBuckets,
   dashboard, CATEGORIES, BUCKETS,
   mailStatus, sendProjectInvoices, sendTestMail,
+  globalMailStatus, saveGlobalMail, sendGlobalTestMail,
 };

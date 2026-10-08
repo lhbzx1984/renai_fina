@@ -184,6 +184,55 @@
           </div>
         </div>
 
+        <!-- 管理员专属：系统发件邮箱。验证码由 auth.js 发出、读全局配置，
+             与上面每人一份的「发票邮件发送」不是同一份，必须单独配一次 -->
+        <div class="card" id="cardGlobalMail" style="display:none">
+          <div class="card-head"><h3>系统发件邮箱（注册验证码）</h3><span class="spacer"></span>
+            <span class="tag tag-global">全校统一</span><span class="hint" id="gmStatusHint"></span></div>
+          <div class="card-body">
+            <div class="hint" style="margin-bottom:10px">新用户注册、忘记密码时，验证码由这个邮箱发出。
+              未配置时注册页会提示「验证码邮箱尚未配置，暂时无法自助注册」。
+              它与上面每个人都有的「发票邮件发送」是两套独立配置。</div>
+            <div class="grid grid-2">
+              <div class="field">
+                <label>发件人邮箱<span class="req">*</span></label>
+                <input class="input" id="gm_from" placeholder="如：xxxxxx@163.com">
+              </div>
+              <div class="field">
+                <label>发件人显示名</label>
+                <input class="input" id="gm_from_name" placeholder="天津仁爱学院报销系统">
+              </div>
+              <div class="field">
+                <label>SMTP 服务器</label>
+                <input class="input" id="gm_smtp_host" placeholder="smtp.163.com">
+              </div>
+              <div class="field">
+                <label>SMTP 端口</label>
+                <input class="input" type="number" id="gm_smtp_port" placeholder="465">
+              </div>
+              <div class="field">
+                <label>SMTP 账号<span class="req">*</span></label>
+                <input class="input" id="gm_smtp_user" placeholder="一般与发件人邮箱相同">
+              </div>
+              <div class="field">
+                <label>SMTP 授权码<span class="req">*</span></label>
+                <input class="input" type="password" id="gm_smtp_pass" placeholder="已保存过则留空，表示不修改" autocomplete="new-password">
+                <div class="hint">接口不会回传明文，只告诉你是否已设置。</div>
+              </div>
+            </div>
+            <div class="field">
+              <label>SSL 加密</label>
+              <div class="check"><input type="checkbox" id="gm_smtp_secure"><span>465 端口请勾选（隐式 SSL）</span></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn btn-primary" id="btnSaveGlobalMail">保存系统发件邮箱</button>
+              <button class="btn" id="btnCopyMyMail">复制我上面的配置</button>
+              <button class="btn" id="btnTestGlobalMail">发送测试邮件</button>
+              <span class="hint" id="gmTip"></span>
+            </div>
+          </div>
+        </div>
+
         <div class="grid grid-2">
           <div class="card">
             <div class="card-head"><h3>项目分类</h3><span class="spacer"></span><span class="hint">内置项不可删除</span></div>
@@ -264,8 +313,8 @@
 <script src="js/api.js"></script>
 <!-- 登录守卫必须在 app.js 之前：它靠「先注册的 DOMContentLoaded 监听器」抢在
      App.init 之前把它顶掉，未登录时阻止应用初始化，登录后再还原执行。 -->
-<script src="js/auth-guard.js?v=20261007b"></script>
-<script src="js/app.js"></script>
+<script src="js/auth-guard.js?v=20261008a"></script>
+<script src="js/app.js?v=20261008a"></script>
 <script>
 // file:// 协议下无法调用后端 API（无同源服务器）。给出明确指引，
 // 而不是让人对着一屏空白数据发呆。

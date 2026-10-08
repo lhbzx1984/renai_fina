@@ -48,6 +48,10 @@ const App = {
     $('#btnSaveSettings').onclick = () => this.saveSettings();
     $('#btnSaveSettings2').onclick = () => this.saveSettings();
     $('#btnTestMail').onclick = () => this.testMail();
+    // 系统发件邮箱（注册验证码用，仅管理员可见可改）
+    const gmSave = $('#btnSaveGlobalMail'); if (gmSave) gmSave.onclick = () => this.saveGlobalMail();
+    const gmCopy = $('#btnCopyMyMail'); if (gmCopy) gmCopy.onclick = () => this.copyMyMailToGlobal();
+    const gmTest = $('#btnTestGlobalMail'); if (gmTest) gmTest.onclick = () => this.testGlobalMail();
     $('#btnNewProject').onclick = () => this.openProjectForm();
     $('#btnAddPeriod').onclick = () => this.addPeriod();
     $('#btnAddCollege').onclick = () => this.addCollege();
@@ -1681,6 +1685,86 @@ const App = {
     this.renderMailStatus();
     this.renderDictLists();
     this.renderStdPreview();
+    this.loadGlobalMail();
+  },
+
+  /* ---------- 系统发件邮箱（注册 / 找回密码的验证码专用，仅管理员） ----------
+     验证码在 auth.js 里发出、只读全局配置，和上面每人一份的发票邮箱不是同一份 */
+  async loadGlobalMail() {
+    const card = $('#cardGlobalMail');
+    if (!card) return;
+    // 普通用户的全局区是锁定的，没必要让他看见这张卡
+    if (this.state.scope && this.state.scope.global_locked) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    try {
+      const g = await Api.get('/api/mail/global-status');
+      $('#gm_from').value = g.from || '';
+      $('#gm_from_name').value = g.fromName || '';
+      $('#gm_smtp_host').value = g.host || '';
+      $('#gm_smtp_port').value = g.port || 465;
+      $('#gm_smtp_secure').checked = !!g.secure;
+      $('#gm_smtp_user').value = g.user || '';
+      $('#gm_smtp_pass').value = '';
+      $('#gm_smtp_pass').placeholder = g.passSet
+        ? '已保存（留空则不修改）' : '邮箱网页端生成的授权码，非登录密码';
+      const hint = $('#gmStatusHint');
+      if (hint) {
+        hint.textContent = g.ready ? '已配置，注册验证码可正常发出'
+          : '未配置，注册页会提示无法自助注册 · 待完善：' + (g.missing || []).join('、');
+        hint.style.color = g.ready ? 'var(--ink-3)' : 'var(--warn, #b26a00)';
+      }
+    } catch (e) { card.style.display = 'none'; }
+  },
+
+  async saveGlobalMail() {
+    const body = {
+      from: ($('#gm_from').value || '').trim(),
+      from_name: ($('#gm_from_name').value || '').trim(),
+      smtp_host: ($('#gm_smtp_host').value || '').trim(),
+      smtp_port: ($('#gm_smtp_port').value || '').trim(),
+      smtp_secure: $('#gm_smtp_secure').checked ? '1' : '0',
+      smtp_user: ($('#gm_smtp_user').value || '').trim(),
+      smtp_pass: $('#gm_smtp_pass').value || '',
+    };
+    if (!body.from || !body.smtp_host || !body.smtp_user) {
+      toast('发件人邮箱、SMTP 服务器、SMTP 账号必填', 'err'); return;
+    }
+    try {
+      const g = await Api.post('/api/mail/global', body);
+      toast(g.ready ? '系统发件邮箱已保存，自助注册可用了' : '已保存，仍缺：' + g.missing.join('、'),
+        g.ready ? 'ok' : 'warn');
+      await this.loadGlobalMail();
+    } catch (e) { toast(e.message, 'err'); }
+  },
+
+  /** 管理员自己已经配过发票邮箱时，一键把配置抄过来，只差授权码要手填一次 */
+  copyMyMailToGlobal() {
+    const s = this.state.settings || {};
+    if (!s.mail_smtp_host || !s.mail_smtp_user) {
+      toast('你自己的邮箱配置还没填完，请先完善上面的「发票邮件发送」', 'err'); return;
+    }
+    $('#gm_from').value = s.mail_from || '';
+    $('#gm_from_name').value = s.mail_from_name || '';
+    $('#gm_smtp_host').value = s.mail_smtp_host || '';
+    $('#gm_smtp_port').value = s.mail_smtp_port || 465;
+    $('#gm_smtp_secure').checked = String(s.mail_smtp_secure) !== '0';
+    $('#gm_smtp_user').value = s.mail_smtp_user || '';
+    $('#gm_smtp_pass').value = '';
+    const tip = $('#gmTip');
+    if (tip) tip.textContent = '已填入你的配置；授权码不下发，需手动输入一次再保存';
+  },
+
+  async testGlobalMail() {
+    const s = this.state.settings || {};
+    const to = String(s.mail_to || s.mail_from || '').split(';')[0].trim()
+      || window.prompt('接收测试邮件的邮箱地址：');
+    if (!to) return;
+    const btn = $('#btnTestGlobalMail');
+    try {
+      btn.disabled = true;
+      const r = await Api.post('/api/mail/global-test', { to });
+      toast('测试邮件已发往 ' + r.to, 'ok');
+    } catch (e) { toast(e.message, 'err'); } finally { btn.disabled = false; }
   },
 
   /* 设置项作用域：带「全校统一」的项只有管理员能改，普通用户直接禁用，免得填了保存不上 */

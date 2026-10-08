@@ -290,6 +290,12 @@ route('DELETE', '/api/receipts/:id', (ctx) => api.deleteReceipt(ctx.params.id, c
 
 /* 发票邮件发送：把项目里的 PDF 发票逐张作为附件发到指定邮箱（邮件配置按用户隔离） */
 route('GET', '/api/mail/status', (ctx) => api.mailStatus(ctx.user));
+// 系统发件邮箱（注册/找回密码的验证码专用）：读全局配置，写需要管理员
+route('GET', '/api/mail/global-status', () => api.globalMailStatus());
+route('POST', '/api/mail/global', async (ctx) =>
+  api.saveGlobalMail(await ctx.json().catch(() => ({})), ctx.user));
+route('POST', '/api/mail/global-test', async (ctx) =>
+  api.sendGlobalTestMail(await ctx.json().catch(() => ({})), ctx.user));
 route('POST', '/api/mail/test', async (ctx) => api.sendTestMail(await ctx.json().catch(() => ({})), ctx.user));
 route('POST', '/api/projects/:id/send-invoices', async (ctx) =>
   api.sendProjectInvoices(ctx.params.id, await ctx.json().catch(() => ({})), ctx.user));
